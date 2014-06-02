@@ -39,7 +39,7 @@ hg_version=$(python2 -c 'from mercurial import util; print util.version()')
 echo "hg_version: $hg_version"
 
 case $hg_version in
-3.0+*)
+3.0*+*)
 	skip_all='skipping remote-hg tests; unsuported version of hg by hg-git'
 	test_done
 	;;
