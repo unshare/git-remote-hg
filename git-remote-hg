@@ -772,6 +772,25 @@ def parse_blob(parser):
     blob_marks[mark] = data
     parser.next()
 
+def get_file_metadata(repo, p1, files):
+    for e in files:
+        f = files[e]
+        if 'rename' in f and 'mode' not in f:
+            old = f['rename']
+            ctx = repo[p1][old]
+            m = ''
+            # .isexec(), .islink() only around in newer versions
+            if hasattr(ctx, 'isexec'):
+                m = ctx.isexec()
+            else:
+                m = ('x' in ctx.flags())
+            if hasattr(ctx, 'islink'):
+                m = ctx.islink()
+            else:
+                m = ('l' in ctx.flags())
+            f['mode'] = m
+            f['data'] = ctx.data()
+
 def get_merge_files(repo, p1, p2, files):
     for e in repo[p1].files():
         if e not in files:
@@ -779,6 +798,19 @@ def get_merge_files(repo, p1, p2, files):
                 continue
             f = { 'ctx': repo[p1][e] }
             files[e] = f
+
+def split_line_pathnames(line):
+    if line[2] != '"':
+        return line.split(' ', 2)
+    else:
+        t = line[0]
+        p = 3
+        while p >= 0:
+            if line[p] == '"' and line[p - 1] != '\\':
+                return line[0], line[2:p+1], line[p+2:]
+            p = line.find('"', p + 1)
+        # hm, should not happen
+        die('Malformed file command: %s' % (line))
 
 def c_style_unescape(string):
     if string[0] == string[-1] == '"':
@@ -822,10 +854,20 @@ def parse_commit(parser):
         elif parser.check('D'):
             t, path = line.split(' ', 1)
             f = { 'deleted': True }
+        elif parser.check('R'):
+            t, old, path = split_line_pathnames(line)
+            old = c_style_unescape(old)
+            f = { 'rename': old }
+            # also mark old deleted
+            files[old] = { 'deleted': True }
+        elif parser.check('C'):
+            t, old, path = split_line_pathnames(line)
+            f = { 'rename': c_style_unescape(old) }
         else:
             die('Unknown file command: %s' % line)
         path = c_style_unescape(path)
-        files[path] = f
+        files[path] = files.get(path, {})
+        files[path].update(f)
 
     # only export the commits if we are on an internal proxy repo
     if dry_run and not peer:
@@ -886,6 +928,11 @@ def parse_commit(parser):
     #
     if merge_mark:
         get_merge_files(repo, p1, p2, files)
+
+    # need to obtain file metadata for copied and renamed files that have
+    # no filemodify line; let's get that from the old file in parent revision
+    if from_mark:
+        get_file_metadata(repo, p1, files)
 
     # Check if the ref is supposed to be a named branch
     if ref.startswith('refs/heads/branches/'):
