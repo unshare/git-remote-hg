@@ -1595,5 +1595,6 @@ def bye():
     if is_tmp:
         shutil.rmtree(dirname)
 
-atexit.register(bye)
-sys.exit(main(sys.argv))
+if __name__ == '__main__':
+    atexit.register(bye)
+    sys.exit(main(sys.argv))
