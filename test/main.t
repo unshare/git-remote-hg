@@ -11,6 +11,13 @@ test_description='Test remote-hg'
 test -n "$TEST_DIRECTORY" || TEST_DIRECTORY=$(dirname $0)/
 . "$TEST_DIRECTORY"/test-lib.sh
 
+if test "$CAPABILITY_PUSH" = "t"
+then
+	git config --global remote-hg.capability-push true
+else
+	git config --global remote-hg.capability-push false
+fi
+
 if ! test_have_prereq PYTHON
 then
 	skip_all='skipping remote-hg tests; python not available'
@@ -176,7 +183,7 @@ test_expect_success 'update bookmark' '
 	git checkout --quiet devel &&
 	echo devel > content &&
 	git commit -a -m devel &&
-	git push --quiet
+	git push --quiet origin devel
 	) &&
 
 	check_bookmark hgrepo devel devel
@@ -618,14 +625,28 @@ test_expect_success 'remote big push' '
 	EOF
 	) &&
 
-	check_branch hgrepo default one &&
-	check_branch hgrepo good_branch "good branch" &&
-	check_branch hgrepo bad_branch "bad branch" &&
-	check_branch hgrepo new_branch '' &&
-	check_bookmark hgrepo good_bmark one &&
-	check_bookmark hgrepo bad_bmark1 one &&
-	check_bookmark hgrepo bad_bmark2 one &&
-	check_bookmark hgrepo new_bmark ''
+	if test "$CAPABILITY_PUSH" = "t"
+	then
+		# cap push handles refs one by one
+		# so it will push all requested it can
+		check_branch hgrepo default six &&
+		check_branch hgrepo good_branch eight &&
+		check_branch hgrepo bad_branch "bad branch" &&
+		check_branch hgrepo new_branch ten &&
+		check_bookmark hgrepo good_bmark three &&
+		check_bookmark hgrepo bad_bmark1 one &&
+		check_bookmark hgrepo bad_bmark2 one &&
+		check_bookmark hgrepo new_bmark six
+	else
+		check_branch hgrepo default one &&
+		check_branch hgrepo good_branch "good branch" &&
+		check_branch hgrepo bad_branch "bad branch" &&
+		check_branch hgrepo new_branch '' &&
+		check_bookmark hgrepo good_bmark one &&
+		check_bookmark hgrepo bad_bmark1 one &&
+		check_bookmark hgrepo bad_bmark2 one &&
+		check_bookmark hgrepo new_bmark ''
+	fi
 '
 
 test_expect_success 'remote big push fetch first' '
@@ -683,12 +704,24 @@ test_expect_success 'remote big push fetch first' '
 
 	git fetch &&
 
-	check_push 1 --all <<-\EOF
-	master
-	good_bmark
-	bad_bmark:non-fast-forward
-	branches/bad_branch:non-fast-forward
-	EOF
+        if test "$CAPABILITY_PUSH" = "t"
+        then
+                # cap push handles refs one by one
+		# so it will already have pushed some above previously
+		# (and master is a fake one that jumps around a bit)
+		check_push 1 --all <<-\EOF
+		master:non-fast-forward
+		bad_bmark:non-fast-forward
+		branches/bad_branch:non-fast-forward
+		EOF
+	else
+		check_push 1 --all <<-\EOF
+		master
+		good_bmark
+		bad_bmark:non-fast-forward
+		branches/bad_branch:non-fast-forward
+		EOF
+	fi
 	)
 '
 

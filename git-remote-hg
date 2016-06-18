@@ -206,12 +206,13 @@ class Marks:
 
 class Parser:
 
-    def __init__(self, repo):
+    def __init__(self, repo, cmdstream=sys.stdin):
         self.repo = repo
+        self.cmdstream = cmdstream
         self.line = self.get_line()
 
     def get_line(self):
-        return sys.stdin.readline().strip()
+        return self.cmdstream.readline().strip()
 
     def __getitem__(self, i):
         return self.line.split()[i]
@@ -241,7 +242,7 @@ class Parser:
             return None
         i = self.line.index(' ') + 1
         size = int(self.line[i:])
-        return sys.stdin.read(size)
+        return self.cmdstream.read(size)
 
     def get_author(self):
         ex = None
@@ -649,7 +650,10 @@ def export_head(repo):
 
 def do_capabilities(parser):
     print "import"
-    print "export"
+    if capability_push:
+        print "push"
+    else:
+        print "export"
     print "refspec refs/heads/branches/*:%s/branches/*" % prefix
     print "refspec refs/heads/*:%s/bookmarks/*" % prefix
     print "refspec refs/tags/*:%s/tags/*" % prefix
@@ -710,20 +714,28 @@ def do_list(parser):
 
     list_head(repo, cur)
 
+    # for export command a ref's old_sha1 is taken from private namespace ref
+    # for push command a fake one is provided
+    # that avoids having the ref status reported as a new branch/tag
+    # (though it will be marked as FETCH_FIRST prior to push,
+    # but that's ok as we will provide proper status)
+    for_push = (parser.line.find('for-push') >= 0)
+    sha1 = 'f' * 40 if (capability_push and for_push) else '?'
+
     if track_branches:
         for branch in branches:
-            print "? refs/heads/branches/%s" % gitref(branch)
+            print "%s refs/heads/branches/%s" % (sha1, gitref(branch))
 
     for bmark in bmarks:
         if bmarks[bmark].hex() == '0' * 40:
             warn("Ignoring invalid bookmark '%s'", bmark)
         else:
-            print "? refs/heads/%s" % gitref(bmark)
+            print "%s refs/heads/%s" % (sha1, gitref(bmark))
 
     for tag, node in repo.tagslist():
         if tag == 'tip':
             continue
-        print "? refs/tags/%s" % gitref(tag)
+        print "%s refs/tags/%s" % (sha1, gitref(tag))
 
     print
 
@@ -1189,8 +1201,16 @@ def check_tip(ref, kind, name, heads):
         return tip in heads
 
 def do_export(parser):
+    do_push_hg(parser)
+    print
+
+def do_push_hg(parser):
+    global parsed_refs, parsed_tags
     p_bmarks = []
     p_revs = {}
+
+    parsed_refs = {}
+    parsed_tags = {}
 
     parser.next()
 
@@ -1216,6 +1236,7 @@ def do_export(parser):
             branch = ref[len('refs/heads/branches/'):]
             if branch in branches and bnode in branches[branch]:
                 # up to date
+                print "ok %s up to date" % ref
                 continue
 
             if peer:
@@ -1235,6 +1256,7 @@ def do_export(parser):
             old = bmarks[bmark].hex() if bmark in bmarks else ''
 
             if old == new:
+                print "ok %s up to date" % ref
                 continue
 
             print "ok %s" % ref
@@ -1274,21 +1296,19 @@ def do_export(parser):
             continue
 
     if need_fetch:
-        print
         return
 
     if dry_run:
         if peer and not force_push:
             checkheads(parser.repo, peer, p_revs)
-        print
         return
 
+    success = True
     if peer:
         ret = push(parser.repo, peer, parsed_refs, p_revs)
         # None ok: nothing to push
         if ret != None and not ret:
             # do not update bookmarks
-            print
             return
 
         # update remote bookmarks
@@ -1297,13 +1317,71 @@ def do_export(parser):
             if force_push:
                 old = remote_bmarks.get(bmark, '')
             if not peer.pushkey('bookmarks', bmark, old, new):
+                success = False
                 print "error %s" % ref
     else:
         # update local bookmarks
         for ref, bmark, old, new in p_bmarks:
             if not bookmarks.pushbookmark(parser.repo, bmark, old, new):
+                success = False
                 print "error %s" % ref
 
+    return success
+
+def do_push_refspec(parser, refspec):
+    global force_push
+
+    force = (refspec[0] == '+')
+    refs = refspec.strip('+').split(':')
+    # only basic refs supported, no renames etc
+    # may not be all one would expect from a native push (but hg is not native)
+    # but it covers at least as much as the export capability supports
+    if refs[0] != refs[1] or \
+            not (refs[0].startswith('refs/heads') or refs[0].startswith('refs/tags')):
+        print "error %s refspec %s not supported " % (refs[1], refspec)
+        return
+    # ok, fire up git-fast-export and process it
+    cmd = ['git', 'fast-export', '--use-done-feature']
+    fast_export_options = get_config('remote-hg.fast-export-options')
+    if not fast_export_options:
+        fast_export_options = '-M -C'
+    cmd.extend(fast_export_options.strip().split())
+    marks = os.path.join(dirname, 'marks-git')
+    if os.path.exists(marks):
+        cmd.append('--import-marks=%s' % marks)
+    # no commit of marks if dry-dry_run
+    # and only commit if all went ok,
+    # otherwise some commits may no longer be exported next time/try around
+    tmpmarks = ''
+    if not dry_run:
+        tmpmarks = os.path.join(dirname, 'marks-git-%d' % (os.getpid()))
+        cmd.append('--export-marks=%s' % tmpmarks)
+    cmd.append(refs[0])
+    export = subprocess.Popen(cmd, stdin=None, stdout=subprocess.PIPE)
+    # a parameter would obviously be nicer here ...
+    force_push = force
+    ok = False
+    try:
+        ok = do_push_hg(Parser(parser.repo, export.stdout))
+    finally:
+        if tmpmarks and os.path.exists(tmpmarks):
+            if ok and not dry_run:
+                # the commits made it through, now we can commit
+                os.rename(tmpmarks, marks)
+            else:
+                os.remove(tmpmarks)
+
+def do_push(parser):
+    if os.environ.get('GIT_REMOTE_HG_DEBUG_PUSH'):
+        dump = ''
+        for line in parser:
+            dump += line + '\n'
+        die('DEBUG push:\n%s' % (dump))
+    for line in parser:
+        if parser.check('push'):
+            do_push_refspec(parser, line.lstrip('push '))
+        else:
+            die('unhandled push command: %s' % (line))
     print
 
 def do_option(parser):
@@ -1336,6 +1414,7 @@ def main(args):
     global fake_bmark, hg_version
     global dry_run
     global notes, alias
+    global capability_push
 
     marks = None
     is_tmp = False
@@ -1353,6 +1432,7 @@ def main(args):
 
     hg_git_compat = get_config_bool('remote-hg.hg-git-compat')
     track_branches = get_config_bool('remote-hg.track-branches', True)
+    capability_push = get_config_bool('remote-hg.capability-push', True)
     force_push = False
 
     if hg_git_compat:
@@ -1372,8 +1452,6 @@ def main(args):
     branches = {}
     bmarks = {}
     blob_marks = {}
-    parsed_refs = {}
-    parsed_tags = {}
     filenodes = {}
     fake_bmark = None
     try:
@@ -1410,6 +1488,8 @@ def main(args):
             do_import(parser)
         elif parser.check('export'):
             do_export(parser)
+        elif parser.check('push'):
+            do_push(parser)
         elif parser.check('option'):
             do_option(parser)
         else:
