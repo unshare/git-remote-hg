@@ -1,0 +1,559 @@
+#!/usr/bin/env python2
+#
+# Copyright (c) 2016 Mark Nauwelaerts
+#
+
+from mercurial import hg, ui, commands, util
+
+import re
+import sys
+import os
+import subprocess
+import argparse
+import textwrap
+import logging
+
+# thanks go to git-remote-helper for some helper functions
+
+def die(msg, *args):
+    sys.stderr.write('ERROR: %s\n' % (msg % args))
+    sys.exit(1)
+
+def warn(msg, *args):
+    sys.stderr.write('WARNING: %s\n' % (msg % args))
+
+def info(msg, *args):
+    logger.info(msg, *args)
+
+def debug(msg, *args):
+    logger.debug(msg, *args)
+
+def log(msg, *args):
+    logger.log(logging.LOG, msg, *args)
+
+class GitHgRepo:
+
+    def __init__(self, topdir=None, gitdir=None):
+        if gitdir != None:
+            self.gitdir = gitdir
+            self.topdir = os.path.join(gitdir, '..') # will have to do
+        else:
+            self.topdir = None
+            if not topdir:
+                topdir = self.run_cmd(['rev-parse', '--show-cdup']).strip()
+                if not topdir:
+                    if not os.path.exists('.git'):
+                        # now we lost where we are
+                        raise Exception('failed to determine topdir')
+                    topdir = '.'
+            self.topdir = topdir
+            self.gitdir = self.run_cmd(['rev-parse', '--git-dir']).strip()
+            if not self.gitdir:
+                raise Exception('failed to determine gitdir')
+            # the above was run in topdir
+            if not os.path.isabs(self.gitdir):
+                self.gitdir = os.path.join(self.topdir, self.gitdir)
+        self.hg_repos = {}
+
+    def identity(self):
+        return '[%s|%s]' % (os.getcwd(), self.topdir)
+
+    # run a git cmd in repo dir, captures stdout and stderr by default
+    # override in kwargs if otherwise desired
+    def run_cmd(self, args, check=False, **kwargs):
+        cmd = ['git'] + args
+        popen_options = { 'cwd': self.topdir,
+            'stdout': subprocess.PIPE, 'stderr': subprocess.PIPE }
+        popen_options.update(kwargs)
+        log('%s running cmd %s with options %s', self.identity(),
+            cmd, popen_options)
+        process = subprocess.Popen(cmd, **popen_options)
+        output = process.communicate()[0]
+        if check and process.returncode != 0:
+            die('command failed: %s', ' '.join(cmd))
+        return output
+
+    def get_config(self, config, getall=False):
+        get = { True : '--get-all', False: '--get' }
+        cmd = ['git', 'config', get[getall] , config]
+        return self.run_cmd(['config', get[getall] , config], stderr=None)
+
+    def get_config_bool(self, config, default=False):
+        value = self.get_config(config).rstrip('\n')
+        if value == "true":
+            return True
+        elif value == "false":
+            return False
+        else:
+            return default
+
+    def get_hg_repo_url(self, remote):
+        url = self.get_config('remote.%s.url' % (remote))
+        if url and url[0:4] == 'hg::':
+            url = url[4:].strip()
+        else:
+            url = None
+        return url
+
+    def get_hg_rev(self, commit):
+        hgrev = self.run_cmd(['notes', '--ref', 'refs/notes/hg', 'show', commit])
+        return hgrev
+
+    def rev_parse(self, ref):
+        args = [ref] if not isinstance(ref, list) else ref
+        args[0:0] = ['rev-parse', '--verify', '-q']
+        return self.run_cmd(args).strip()
+
+    def update_ref(self, ref, value):
+        self.run_cmd(['update-ref', '-m', 'update by helper', ref, value])
+        # let's check it happened
+        return git_rev_parse(ref) == git_rev_parse(value)
+
+    def cat_file(self,  ref):
+        return self.run_cmd(['cat-file', '-p', ref])
+
+    def get_git_commit(self, rev):
+        mydir = os.path.dirname(__file__)
+        import imp
+        remotehg = imp.load_source('remotehg', os.path.join(mydir, 'git-remote-hg'))
+        for r in self.get_hg_repos():
+            try:
+                hgpath = os.path.join(self.gitdir, 'hg', r)
+                m = remotehg.Marks(os.path.join(hgpath, 'marks-hg'), None)
+                mark = m.from_rev(rev)
+                m = GitMarks(os.path.join(hgpath, 'marks-git'))
+                return m.to_rev(mark)
+            except:
+                pass
+
+    # returns dict: (alias: local hg repo dir)
+    def get_hg_repos(self):
+        # minor caching
+        if self.hg_repos:
+            return self.hg_repos
+
+        # check any local hg repo to see if rev is in there
+        shared_path = os.path.join(self.gitdir, 'hg')
+        hg_path = os.path.join(shared_path, '.hg')
+        if os.path.exists(shared_path):
+            repos = os.listdir(shared_path)
+            for r in repos:
+                # skip the shared repo
+                if r == '.hg':
+                    continue
+                local_path = os.path.join(shared_path, r, 'clone')
+                local_hg = os.path.join(local_path, '.hg')
+                if not os.path.exists(local_hg):
+                    # could be a local repo without proxy, fetch url
+                    local_path = self.get_hg_repo_url(r)
+                    if not local_path:
+                        warn('failed to find local hg for remote %s', r)
+                        continue
+                else:
+                    # make sure the shared path is always up-to-date
+                    util.writefile(os.path.join(local_hg, 'sharedpath'), hg_path)
+                self.hg_repos[r] = os.path.join(local_path)
+
+        log('%s determined hg_repos %s', self.identity(), self.hg_repos)
+        return self.hg_repos
+
+    # returns hg repo object
+    def get_hg_repo(self, r):
+        repos = self.get_hg_repos()
+        if r in repos:
+            local_path = repos[r]
+            hushui = ui.ui()
+            hushui.setconfig('ui', 'interactive', 'off')
+            hushui.fout = open(os.devnull, 'w')
+            return hg.repository(hushui, local_path)
+
+    def find_hg_repo(self, rev):
+        repos = self.get_hg_repos()
+        for r in repos:
+            srepo = self.get_hg_repo(r)
+            # if this one had it, we are done
+            if srepo and rev in srepo and srepo[rev]:
+                return srepo
+
+
+class SubCommand:
+
+    def __init__(self, subcmdname, githgrepo):
+        self.subcommand = subcmdname
+        self.githgrepo = githgrepo
+        self.argparser = self.argumentparser()
+
+    def argumentparser(self):
+        return argparse.ArgumentParser()
+
+    def get_remote(self, args):
+        if len(args):
+            return (args[0], args[1:])
+        else:
+            self.usage('missing argument: <remote-alias>')
+
+    def get_remote_url_hg(self, remote):
+        url = self.githgrepo.get_hg_repo_url(remote)
+        if not url:
+            self.usage('%s is not a remote hg repository' % (remote))
+        return url
+
+    def execute(self, args):
+        (self.options, self.args) = self.argparser.parse_known_args(args)
+        self.do(self.options, self.args)
+
+    def usage(self, msg):
+        if msg:
+            self.argparser.error(msg)
+        else:
+            self.argparser.print_usage(sys.stderr)
+            sys.exit(2)
+
+    def do(self, options, args):
+        pass
+
+
+class HgRevCommand(SubCommand):
+
+    def argumentparser(self):
+        usage = '%%(prog)s %s [options] <commit-ish>' % (self.subcommand)
+        p = argparse.ArgumentParser(usage=usage)
+        p.epilog = textwrap.dedent("""\
+        Determines the hg revision corresponding to <commit-ish>.
+        """)
+        return p
+
+    def do(self, options, args):
+        if len(args):
+            hgrev = self.githgrepo.get_hg_rev(args[0])
+            if hgrev:
+                print hgrev
+
+
+class GitMarks:
+
+    def __init__(self, path):
+      self.path = path
+      self.clear()
+      self.load()
+
+    def clear(self):
+        self.marks = {}
+        self.rev_marks = {}
+
+    def load(self):
+        if not os.path.exists(self.path):
+            return
+
+        for l in file(self.path):
+            m, c = l.strip().split(' ', 2)
+            m = int(m[1:])
+            self.marks[c] = m
+            self.rev_marks[m] = c
+
+    def store(self):
+        marks = self.rev_marks.keys()
+        marks.sort()
+        with open(self.path, 'w') as f:
+            for m in marks:
+                f.write(':%d %s\n' % (m, self.rev_marks[m]))
+
+    def from_rev(self, rev):
+        return self.marks[rev]
+
+    def to_rev(self, mark):
+        return str(self.rev_marks[mark])
+
+
+class GitRevCommand(SubCommand):
+
+    def argumentparser(self):
+        usage = '%%(prog)s %s [options] <revision>' % (self.subcommand)
+        p = argparse.ArgumentParser(usage=usage)
+        p.epilog = textwrap.dedent("""\
+        Determines the git commit id corresponding to hg <revision>.
+        """)
+        return p
+
+    def do(self, options, args):
+        if len(args):
+            rev = args[0]
+            gitcommit = self.githgrepo.get_git_commit(rev)
+            if gitcommit:
+                print gitcommit
+
+
+class MarksCommand(SubCommand):
+
+    def argumentparser(self):
+        usage = '%%(prog)s %s [options] <remote>...' % (self.subcommand)
+        p = argparse.ArgumentParser(usage=usage, \
+            formatter_class=argparse.RawDescriptionHelpFormatter)
+        p.add_argument('-n', '--dry-run', action='store_true',
+            help='do not actually update any metadata files')
+        p.add_argument('--keep', metavar='REVID',
+            help='only retain ancestors of REVID (including) in \
+                  hg tracking metadata, akin to hg\'s strip')
+        p.epilog = textwrap.dedent("""\
+        Performs checks on <remote>'s marks files and ensures these are consistent
+        (never affecting or touching any git repository objects or history).
+        The marks files are considered consistent if they "join"
+        on the :mark number (with no dangling hg or git commit id on either side).
+
+        While fetching from an hg remote usually results in a sane state, there
+        are some cases where that might not suffice (or not even succeed in the first
+        place). Also, fetching will only ever add tracked metadata marks, whereas
+        sometimes forgetting about some state might be required for consistent state
+        recovery (e.g. a strip performed on a remote Mercurial repo). Executing this
+        command should allow a subsequent fetch to succeed and restore a sane state
+        quickly.  In particular, making good use of --keep following a strip allows
+        a subsequent fetch to recover quickly without extensive history processing.
+
+        Furthermore, since git-fast-import (used during fetch) also dumps
+        non-commit SHA-1 in the marks file, the latter can become pretty large.
+        It will reduce in size by either performing a push (git-fast-export only
+        dumps commit objects to marks file) or by running this helper command.
+        """)
+        return p
+
+    def do(self, options, args):
+        mydir = os.path.dirname(__file__)
+        import imp
+        remotehg = imp.load_source('remotehg', os.path.join(mydir, 'git-remote-hg'))
+
+        hg_repos = self.githgrepo.get_hg_repos()
+        if not args:
+            self.usage('no remote specified')
+        for remote in args:
+            if not remote in hg_repos:
+                self.usage('%s is not a valid hg remote' % (remote))
+            hgpath = os.path.join(self.githgrepo.gitdir, 'hg', remote)
+            hgm = remotehg.Marks(os.path.join(hgpath, 'marks-hg'), None)
+            gm = GitMarks(os.path.join(hgpath, 'marks-git'))
+            repo = hg.repository(ui.ui(), hg_repos[remote])
+            ctx = ctxrev = None
+            if options.keep != None:
+                strip = options.keep
+                if strip in repo and repo[strip]:
+                    ctx = repo[strip]
+                    ctxrev = ctx.rev()
+                if not ctxrev >= 0:
+                    self.usage('revision %s not found in repository %s' % (strip, repo.root))
+            # reduce down to marks that are common to both
+            common_marks = set(hgm.rev_marks.keys()).intersection(gm.rev_marks.keys())
+            hg_rev_marks = {}
+            git_rev_marks = {}
+            for m in common_marks:
+                rev = hgm.rev_marks[m]
+                # also check if still around in repo
+                if rev in repo and \
+                        not (ctxrev != None and repo[rev].rev() > ctxrev):
+                    hg_rev_marks[m] = hgm.rev_marks[m]
+                    git_rev_marks[m] = gm.rev_marks[m]
+            # common marks will not not include any refs/notes/hg
+            # let's not discard those casually, though they are not vital
+            revlist = subprocess.Popen(['git', 'rev-list', 'refs/notes/hg'], stdout=subprocess.PIPE)
+            for l in revlist.stdout.readlines():
+                c = l.strip()
+                m = gm.marks.get(c, 0)
+                if m:
+                    git_rev_marks[m] = c
+            # also save last-note mark
+            if hgm.last_note:
+                git_rev_marks[hgm.last_note] = gm.rev_marks[hgm.last_note]
+            # some status report
+            if len(hgm.rev_marks) != len(hg_rev_marks):
+                print "Trimmed hg marks from #%d down to #%d" % (len(hgm.rev_marks), len(hg_rev_marks))
+            if len(gm.rev_marks) != len(git_rev_marks):
+                print "Trimmed git marks from #%d down to #%d" % (len(gm.rev_marks), len(git_rev_marks))
+            # make hg tips as consistent as possible
+            for b in hgm.tips:
+                tip = hgm.tips[b]
+                if tip not in repo or not repo[tip]:
+                    if not ctx:
+                        print "Could not determine safe value for tip of %s (rev %s)" % (b, tip)
+                        print "Please use --strip to provide fallback value."
+                        return
+                    else:
+                        # basically only the revision number is used by a fetch
+                        tip = ctx.hex()
+                else:
+                    hgrevs = set(hg_rev_marks.values())
+                    while True:
+                        if tip in hgrevs:
+                            break
+                        parent = repo[tip].parents()[0].hex()
+                        if parent == tip:
+                            break
+                        tip = parent
+                if hgm.tips[b] != tip:
+                    hgm.tips[b] = tip
+                    print "Updated tip of %s to %s" % (b, tip)
+            # now update and store
+            if not options.dry_run:
+                # hg marks
+                hgm.rev_marks = hg_rev_marks
+                hgm.marks = {}
+                for mark, rev in hg_rev_marks.iteritems():
+                    hgm.marks[rev] = mark
+                hgm.store()
+                # git marks
+                gm.rev_marks = git_rev_marks
+                gm.marks = {}
+                for mark, rev in git_rev_marks.iteritems():
+                    gm.marks[rev] = mark
+                gm.store()
+
+
+class RepoCommand(SubCommand):
+
+    def argumentparser(self):
+        usage = '%%(prog)s %s [options] <remote>...' % (self.subcommand)
+        p = argparse.ArgumentParser(usage=usage)
+        p.epilog = textwrap.dedent("""\
+        Determines the local hg repository of <remote>.
+        This can either be a separate and independent local hg repository
+        or a local proxy repo (within the .git directory).
+        """)
+        return p
+
+    def do(self, options, args):
+        (remote, args) = self.get_remote(args)
+        repos = self.githgrepo.get_hg_repos()
+        if remote in repos:
+            print repos[remote].rstrip('/')
+
+
+class HgCommand(SubCommand):
+
+    def argumentparser(self):
+        usage = '%%(prog)s %s <hg-command>...' % (self.subcommand)
+        p = argparse.ArgumentParser(usage=usage)
+        hgdir = self.githgrepo.get_hg_repos()[self.subcommand]
+        p.epilog = textwrap.dedent("""\
+        Executes <hg-command> on the backing repository of %s (%s)
+        (by supplying it with the standard -R option).
+        """ % (self.subcommand, hgdir))
+        return p
+
+    def do(self, options, args):
+        # subcommand name is already a known valid alias of hg repo
+        remote = self.subcommand
+        repos = self.githgrepo.get_hg_repos()
+        if len(args) and remote in repos:
+            if args[0].find('hg') < 0:
+                args.insert(0, 'hg')
+            args[1:1] = ['-R', repos[remote]]
+            p = subprocess.Popen(args, stdout=None)
+            p.wait()
+        else:
+            if len(args):
+                self.usage('invalid repo: %s' % remote)
+            else:
+                self.usage('missing command')
+
+
+class HelpCommand(SubCommand):
+
+    def do(self, options, args):
+        if len(args):
+            cmd = args[0]
+            if cmd in subcommands:
+                p = subcommands[cmd].argumentparser()
+                p.print_help(sys.stderr)
+                return
+        do_usage()
+
+
+def get_subcommands():
+    commands = {
+        'hg-rev': HgRevCommand,
+        'git-rev': GitRevCommand,
+        'repo': RepoCommand,
+        'marks':  MarksCommand,
+        'help' : HelpCommand
+    }
+    # add remote named subcommands
+    repos = githgrepo.get_hg_repos()
+    for r in repos:
+        if not r in commands:
+            commands[r] = HgCommand
+    # now turn into instances
+    for c in commands:
+        commands[c] = commands[c](c, githgrepo)
+    return commands
+
+
+def do_usage():
+    usage = textwrap.dedent("""
+    git-hg-helper subcommands:
+
+    hg-rev  \t show hg revision corresponding to a git revision
+    git-rev \t find git revision corresponding to a hg revision
+    marks   \t perform maintenance on repo tracking marks
+    repo    \t show local hg repo backing a remote
+
+    If the subcommand is the name of a remote hg repo, then any remaining arguments
+    are considered a "hg command", e.g. hg heads, or thg, and it is then executed
+    with -R set appropriately to the local hg repo backing the specified remote.
+    Do note, however, that the local proxy repos are not maintained as exact mirrors
+    of their respective remote, and also use shared storage.  As such, depending
+    on the command, the result may not be exactly as could otherwise be expected
+    (e.g. might involve more heads, etc).
+
+    Available hg remotes:
+    """)
+    for r in githgrepo.get_hg_repos():
+        usage += '\t%s\n' % (r)
+    usage += '\n'
+    sys.stderr.write(usage)
+    sys.stderr.flush()
+    sys.exit(2)
+
+def init_git(gitdir=None):
+    global githgrepo
+
+    try:
+        githgrepo = GitHgRepo(gitdir=gitdir)
+    except Exception, e:
+        die(str(e))
+
+def init_logger():
+    global logger
+
+    # setup logging
+    logging.LOG = 5
+    logging.addLevelName(logging.LOG, 'LOG')
+    envlevel = os.environ.get('GIT_HG_HELPER_DEBUG', 'WARN')
+    loglevel = logging.getLevelName(envlevel)
+    logging.basicConfig(level=loglevel, \
+        format='%(asctime)-15s %(levelname)s %(message)s')
+    logger = logging.getLogger()
+
+def main(argv):
+    global subcommands
+
+    # init repo dir
+    # we will take over dir management ...
+    init_git(os.environ.pop('GIT_DIR', None))
+
+    # as an alias, cwd is top dir, change again to original directory
+    reldir = os.environ.get('GIT_PREFIX')
+    if reldir:
+        os.chdir(reldir)
+
+    subcommands = get_subcommands()
+
+    cmd = ''
+    if len(argv) > 1:
+        cmd = argv[1]
+    argv = argv[2:]
+    if cmd in subcommands:
+        c = subcommands[cmd]
+        c.execute(argv)
+    else:
+        do_usage()
+
+init_logger()
+if __name__ == '__main__':
+    sys.exit(main(sys.argv))
