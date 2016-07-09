@@ -474,6 +474,47 @@ test_expect_success 'remote new bookmark multiple branch head' '
 # cleanup previous stuff
 rm -rf hgrepo
 
+testcopyrenamedesc='push commits with copy and rename'
+testcopyrename='
+	test_when_finished "rm -rf gitrepo hgrepo" &&
+
+	(
+	hg init hgrepo &&
+	cd hgrepo &&
+	echo zero > content &&
+	hg add content &&
+	hg commit -m zero
+	) &&
+
+	git clone "hg::hgrepo" gitrepo &&
+
+	(
+	cd gitrepo &&
+	cp content content-copy &&
+	echo one > content &&
+	git add content content-copy &&
+	git commit -m copy &&
+	git mv content-copy content-moved
+	git commit -m moved &&
+	git push origin master
+	) &&
+
+	(
+	hg -R hgrepo update &&
+	test_cmp gitrepo/content hgrepo/content
+	test_cmp gitrepo/content-moved hgrepo/content-moved
+	cd hgrepo &&
+	test `hg log -f content-moved | grep -c changeset` -eq 3
+	)
+'
+
+if test "$CAPABILITY_PUSH" = "t"
+then
+test_expect_success "$testcopyrenamedesc" "$testcopyrename"
+else
+test_expect_failure "$testcopyrenamedesc" "$testcopyrename"
+fi
+
 test_expect_success 'fetch special filenames' '
 	test_when_finished "rm -rf hgrepo gitrepo && LC_ALL=C" &&
 
