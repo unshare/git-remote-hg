@@ -17,6 +17,17 @@ That's it :)
 
 Obviously you will need Mercurial installed.
 
+****
+At present, this "working copy"/fork adds the following features
+(and I would prefer it is indeed rather a "working copy"
+to be appropriately merged upstream):
+
+* eliminates a number of <<limitations, limitations>> as mentioned below
+* properly annotates copy/rename when pushing new commits to Mercurial
+
+See sections below or sidemarked notes for more details.
+****
+
 == Configuration ==
 
 If you want to see Mercurial revisions as Git commit notes:
@@ -107,6 +118,7 @@ Closed branches are not supported; they are not shown and you can't close or
 reopen. Additionally in certain rare situations a synchronization issue can
 occur (https://github.com/felipec/git/issues/65[Bug #65]).
 
+[[limitations]]
 Limitations of the remote-helpers' framework apply. In particular, these
 commands don't work:
 
@@ -114,16 +126,63 @@ commands don't work:
 * `git push origin old:new` (it will push 'old') (patches available)
 * `git push --dry-run origin branch` (it will push) (patches available)
 
+****
+Another limitation is that if `git log` reports a rename, this will not survive
+the push and Mercurial will not be aware of a rename (and similarly so for copy).
+Though Mercurial would know about it if you *manually* ran `git-format-patch`
+followed by a `hg apply -s`, which is not the nice way to go obviously.
+
+Actually, scratch the limitations above ascribed to the remote-helpers framework.
+They are not limitations of the framework, but are due to how the original
+implementation of 'git-remote-hg' interacts with it.
+Using the remote-helpers framework in only a slightly different way has none
+of the above limitations.  See the <<no-limitations, relevant section>>
+below for more details.
+****
+
 == Other projects ==
 
 There are other 'git-remote-hg' projects out there, do not confuse this one,
-this is the one distributed officially by the Git project:
+this is the one distributed officially by the Git project
+(_though actually no longer so nowadays_):
 
 * https://github.com/msysgit/msysgit/wiki/Guide-to-git-remote-hg[msysgit's git-remote-hg]
 * https://github.com/rfk/git-remote-hg[rfk's git-remote-hg]
 
 For a comparison between these and other projects go
 https://github.com/felipec/git/wiki/Comparison-of-git-remote-hg-alternatives[here].
+
+[[no-limitations]]
+== Limitations (or not) ==
+
+If interested in some of technical details behind this explanation, then also
+see the relevant section in 'git-remote-hg' manpage.  Otherwise, the general
+idea is presented here.
+
+More precisely and simply, the <<limitations, mentioned limitations>> are indeed
+limitations of the `export` capability of
+https://www.kernel.org/pub/software/scm/git/docs/gitremote-helpers.html[gitremote-helpers(1)]
+framework.  However, the framework also supports a `push` capability and when this
+is used appropriately in the remote helper the aforementioned limitations do not apply.
+In the case of `export` capability, git-core will internally invoke `git-fast-export`
+and the helper will process this data and hand over generated changesets to Mercurial.
+In the case of `push` capability, git informs the helper what (refs) should go where,
+and the helper is free to ponder about this and take the required action, such as
+to invoke `git-fast-export` itself (with suitable options) and process its output
+the same way as before (and over to Mercurial).
+
+And so;
+
+* `git push origin :branch-to-delete` will delete the bookmark `branch-to-delete` on remote
+* `git push --dry-run origin branch` will not touch the remote
+(or any local state, except for local helper proxy repo)
+* `git push origin old:new` will push `old` onto `new` in the remote
+* `git push origin <history-with-copy/rename>` will push copy/rename aware Mercurial revisions
+
+To tweak how 'git-remote-hg' decides on a copy/rename, use e.g:
+--------------------------------------
+% git config --global remote-hg.fast-export-options '-M -C -C'
+--------------------------------------
 
 == Contributing ==
 
