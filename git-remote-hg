@@ -116,6 +116,12 @@ def rev_parse(rev):
     output, _ = process.communicate()
     return output
 
+def get_rev_hg(commit):
+    cmd = ['git', 'notes', '--ref', 'refs/notes/hg', 'show', commit]
+    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    hgrev, _ = process.communicate()
+    return hgrev
+
 class Marks:
 
     def __init__(self, path, repo):
@@ -204,12 +210,21 @@ class Marks:
     def set_tip(self, branch, tip):
         self.tips[branch] = tip
 
+class ParserContext:
+
+    def __init__(self):
+        # known context attributes
+        self.localref = None
+        self.remoteref = None
+        self.gitmarks = None
+
 class Parser:
 
-    def __init__(self, repo, cmdstream=sys.stdin):
+    def __init__(self, repo, cmdstream=sys.stdin, ctx=ParserContext()):
         self.repo = repo
         self.cmdstream = cmdstream
         self.line = self.get_line()
+        self.context = ctx
 
     def get_line(self):
         return self.cmdstream.readline().strip()
@@ -837,7 +852,8 @@ def c_style_unescape(string):
 def parse_commit(parser):
     from_mark = merge_mark = None
 
-    ref = parser[1]
+    remoteref = parser.context.remoteref
+    ref = parser[1] if not remoteref else remoteref
     parser.next()
 
     commit_mark = parser.get_mark()
@@ -986,7 +1002,8 @@ def parse_commit(parser):
     marks.new_mark(node, commit_mark)
 
 def parse_reset(parser):
-    ref = parser[1]
+    remoteref = parser.context.remoteref
+    ref = parser[1] if not remoteref else remoteref
     parser.next()
     # ugh
     if parser.check('commit'):
@@ -1219,6 +1236,22 @@ def do_push_hg(parser):
 
     parser.next()
 
+    remoteref = parser.context.remoteref
+    if remoteref and not parser.line:
+        # if remoteref is in past exported
+        # git-fast-export might not produce anything at all
+        # that is ok'ish, we will determine parsed_ref another way
+        localref = parser.context.localref
+        hgrev = get_rev_hg(localref)
+        if not hgrev:
+            # maybe the notes are not updated
+            # happens only on fetch for now ... let's ask for that
+            print "error %s fetch first" % remoteref
+            return False
+        parsed_refs[remoteref] = hgrev
+        # now make parser happy
+        parser.line = 'done'
+
     for line in parser.each_block('done'):
         if parser.check('blob'):
             parse_blob(parser)
@@ -1361,19 +1394,26 @@ def do_push_refspec(parser, refspec):
     force = (refspec[0] == '+')
     refs = refspec.strip('+').split(':')
     # check for delete
-    if (not refs[0]) and refs[1].startswith('refs/heads'):
+    if (not refs[0]) and refs[1].startswith('refs/heads') and \
+            not refs[1].startswith('refs/heads/branches'):
         if not delete_bookmark(parser, refs[1]):
             print "error %s could not delete"% (refs[1])
         else:
             print "ok %s" % (refs[1])
         return
-    # only basic refs supported, no renames
-    # may not be all one would expect from a native push (but hg is not native)
-    # but it covers at least as much as the export capability supports
-    if refs[0] != refs[1] or \
-            not (refs[0].startswith('refs/heads') or refs[0].startswith('refs/tags')):
-        print "error %s refspec %s not supported " % (refs[1], refspec)
+    # sanity check on remote ref
+    if not (refs[1].startswith('refs/heads') or refs[1].startswith('refs/tags')):
+        print "error %s refspec not supported " % refs[1]
         return
+    ctx = ParserContext()
+    if refs[0] != refs[1]:
+        # would work and tag as requested, but pushing to a hg permanent branch
+        # based on a rename rather than a git branch is probably not a good idea
+        if refs[1].startswith('refs/heads/branches'):
+            print "error %s not allowed for permanent branch" % refs[1]
+            return
+        ctx.remoteref = refs[1]
+        ctx.localref = refs[0]
     # ok, fire up git-fast-export and process it
     cmd = ['git', 'fast-export', '--use-done-feature']
     fast_export_options = get_config('remote-hg.fast-export-options')
@@ -1396,7 +1436,7 @@ def do_push_refspec(parser, refspec):
     force_push = force
     ok = False
     try:
-        ok = do_push_hg(Parser(parser.repo, export.stdout))
+        ok = do_push_hg(Parser(parser.repo, export.stdout, ctx))
     finally:
         if tmpmarks and os.path.exists(tmpmarks):
             if ok and not dry_run:

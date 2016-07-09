@@ -29,4 +29,36 @@ test_expect_success 'remote delete bookmark' '
 	check_bookmark hgrepo feature-a ''
 '
 
+test_expect_success 'source:dest bookmark' '
+	test_when_finished "rm -rf hgrepo gitrepo" &&
+
+	(
+	hg init hgrepo &&
+	cd hgrepo &&
+	echo zero > content &&
+	hg add content &&
+	hg commit -m zero
+	) &&
+
+	git clone "hg::hgrepo" gitrepo &&
+
+	(
+	cd gitrepo &&
+	echo one > content &&
+	git commit -a -m one &&
+	git push --quiet origin master:feature-b &&
+	git push --quiet origin master^:refs/heads/feature-a
+	) &&
+
+	check_bookmark hgrepo feature-a zero &&
+	check_bookmark hgrepo feature-b one &&
+
+	(
+	cd gitrepo &&
+	git push --quiet origin master:feature-a
+	) &&
+
+	check_bookmark hgrepo feature-a one
+'
+
 test_done
