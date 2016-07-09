@@ -1478,6 +1478,25 @@ def fix_path(alias, repo, orig_url):
     cmd = ['git', 'config', 'remote.%s.url' % alias, "hg::%s" % abs_url]
     subprocess.call(cmd)
 
+def select_private_refs(alias):
+    show_private_refs = get_config_bool('remote-hg.show-private-refs', False)
+    # selection is easy, but let's also clean the refs of the alternative
+    # in any case, will be recreated along the way as and when needed
+    if show_private_refs:
+        path = "%s/refs" % (dirname)
+        if os.path.exists(path):
+            shutil.rmtree(path, True)
+        # in refs space
+        return 'refs/hg/%s' % alias
+    else:
+        refs = subprocess.Popen(['git', 'for-each-ref', \
+            '--format=delete %(refname)', 'refs/hg'], stdout=subprocess.PIPE)
+        update = subprocess.Popen(['git', 'update-ref', '--stdin'], stdin=refs.stdout)
+        refs.stdout.close()  # helps with SIGPIPE
+        update.communicate()
+        # keep private implementation refs really private
+        return 'hg/%s/refs' % alias
+
 def main(args):
     global prefix, gitdir, dirname, branches, bmarks
     global marks, blob_marks, parsed_refs
@@ -1539,7 +1558,7 @@ def main(args):
     dry_run = False
     notes = set()
 
-    prefix = 'refs/hg/%s' % alias
+    prefix = select_private_refs(alias)
     repo = get_repo(url, alias)
 
     if not is_tmp:
