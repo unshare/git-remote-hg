@@ -24,6 +24,7 @@ to be appropriately merged upstream):
 
 * eliminates a number of <<limitations, limitations>> as mentioned below
 * properly annotates copy/rename when pushing new commits to Mercurial
+* avoids clutter of `refs/hg/...` by keeping these implementation details really private
 
 See sections below or sidemarked notes for more details.
 ****
