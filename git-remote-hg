@@ -1078,7 +1078,7 @@ def write_tag(repo, tag, node, msg, author):
 
     return (tagnode, branch)
 
-def checkheads_bmark(repo, ref, ctx):
+def checkheads_bmark(repo, ref, ctx, force):
     bmark = ref[len('refs/heads/'):]
     if bmark not in bmarks:
         # new bmark
@@ -1092,7 +1092,7 @@ def checkheads_bmark(repo, ref, ctx):
         return False
 
     if not repo.changelog.descendant(ctx_old.rev(), ctx_new.rev()):
-        if force_push:
+        if force:
             print "ok %s forced update" % ref
         else:
             print "error %s non-fast forward" % ref
@@ -1100,7 +1100,7 @@ def checkheads_bmark(repo, ref, ctx):
 
     return True
 
-def checkheads(repo, remote, p_revs):
+def checkheads(repo, remote, p_revs, force):
 
     remotemap = remote.branchmap()
     if not remotemap:
@@ -1118,7 +1118,7 @@ def checkheads(repo, remote, p_revs):
             continue
         if not ref.startswith('refs/heads/branches'):
             if ref.startswith('refs/heads/'):
-                if not checkheads_bmark(repo, ref, ctx):
+                if not checkheads_bmark(repo, ref, ctx, force):
                     ret = False
 
             # only check branches
@@ -1144,7 +1144,7 @@ def checkheads(repo, remote, p_revs):
 
             node = repo.changelog.node(rev)
             ref = p_revs[node]
-            if force_push:
+            if force:
                 print "ok %s forced update" % ref
             else:
                 print "error %s non-fast forward" % ref
@@ -1152,18 +1152,13 @@ def checkheads(repo, remote, p_revs):
 
     return ret
 
-def push_unsafe(repo, remote, parsed_refs, p_revs):
-
-    force = force_push
+def push_unsafe(repo, remote, p_revs, force):
 
     fci = discovery.findcommonincoming
     commoninc = fci(repo, remote, force=force)
     common, _, remoteheads = commoninc
     fco = discovery.findcommonoutgoing
     outgoing = fco(repo, remote, onlyheads=list(p_revs), commoninc=commoninc, force=force)
-
-    if not checkheads(repo, remote, p_revs):
-        return False
 
     # nice to know about this rather than assume a bogus error
     # also, some remote peertypes might otherwise be surprised further down
@@ -1193,7 +1188,7 @@ def push_unsafe(repo, remote, parsed_refs, p_revs):
 
     return ret
 
-def push(repo, remote, parsed_refs, p_revs):
+def push(repo, remote, p_revs, force):
     if hasattr(remote, 'canpush') and not remote.canpush():
         print "error cannot push"
 
@@ -1206,7 +1201,7 @@ def push(repo, remote, parsed_refs, p_revs):
     if not unbundle:
         lock = remote.lock()
     try:
-        ret = push_unsafe(repo, remote, parsed_refs, p_revs)
+        ret = push_unsafe(repo, remote, p_revs, force)
     finally:
         if lock is not None:
             lock.release()
@@ -1338,12 +1333,14 @@ def do_push_hg(parser):
 
     if dry_run:
         if peer and not force_push:
-            checkheads(parser.repo, peer, p_revs)
+            checkheads(parser.repo, peer, p_revs, force_push)
         return
 
     success = True
     if peer:
-        ret = push(parser.repo, peer, parsed_refs, p_revs)
+        if not checkheads(parser.repo, peer, p_revs, force_push):
+            return False
+        ret = push(parser.repo, peer, p_revs, force_push)
         # None ok: nothing to push
         if ret != None and not ret:
             # do not update bookmarks
