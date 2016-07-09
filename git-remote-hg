@@ -664,6 +664,11 @@ def do_capabilities(parser):
         print "*import-marks %s" % path
     print "*export-marks %s" % path
     print "option"
+    # nothing really depends on the private refs being up to date
+    # (export is limited anyway by the current git marks)
+    # and they are not always updated correctly (dry-run, bookmark delete, ...)
+    # (might resolve some dry-run breakage also)
+    print "no-private-update"
 
     print
 
@@ -1328,12 +1333,41 @@ def do_push_hg(parser):
 
     return success
 
+def delete_bookmark(parser, ref):
+    bmark = ref[len('refs/heads/'):]
+    if bmark == fake_bmark:
+        return False
+    # delete local (proxy or target)
+    old = bmarks[bmark].hex() if bmark in bmarks else ''
+    if not old:
+        return False
+    ok = False
+    if old:
+        ok = bookmarks.pushbookmark(parser.repo, bmark, old, '')
+        # propagate to peer if appropriate
+        if ok and peer:
+            remote_bmarks = peer.listkeys('bookmarks')
+            old = remote_bmarks.get(bmark, '')
+            ok = peer.pushkey('bookmarks', bmark, old, '')
+        # delete private ref
+        if ok:
+            pbookmark = '%s/bookmarks/%s' % (prefix, bmark)
+            subprocess.call(['git', 'update-ref', '-d', pbookmark])
+    return ok
+
 def do_push_refspec(parser, refspec):
     global force_push
 
     force = (refspec[0] == '+')
     refs = refspec.strip('+').split(':')
-    # only basic refs supported, no renames etc
+    # check for delete
+    if (not refs[0]) and refs[1].startswith('refs/heads'):
+        if not delete_bookmark(parser, refs[1]):
+            print "error %s could not delete"% (refs[1])
+        else:
+            print "ok %s" % (refs[1])
+        return
+    # only basic refs supported, no renames
     # may not be all one would expect from a native push (but hg is not native)
     # but it covers at least as much as the export capability supports
     if refs[0] != refs[1] or \

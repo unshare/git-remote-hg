@@ -1152,4 +1152,7 @@ test_expect_success 'clone replace directory with a file' '
 	check_files gitrepo "dir_or_file"
 '
 
+if test "$CAPABILITY_PUSH" != "t"
+then
 test_done
+fi
