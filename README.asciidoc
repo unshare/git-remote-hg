@@ -18,12 +18,14 @@ That's it :)
 Obviously you will need Mercurial installed.
 
 ****
-At present, this "working copy"/fork adds the following features
+At present, this "working copy"/fork <<add-features, adds the following features>>
 (and I would prefer it is indeed rather a "working copy"
 to be appropriately merged upstream):
 
 * eliminates a number of <<limitations, limitations>> as mentioned below
 * properly annotates copy/rename when pushing new commits to Mercurial
+* adds a 'git-hg-helper' script than can aid in the git-hg interaction workflow
+* provides enhanced bidirectional git-hg safety
 * avoids clutter of `refs/hg/...` by keeping these implementation details really private
 
 See sections below or sidemarked notes for more details.
@@ -184,6 +186,114 @@ To tweak how 'git-remote-hg' decides on a copy/rename, use e.g:
 --------------------------------------
 % git config --global remote-hg.fast-export-options '-M -C -C'
 --------------------------------------
+
+[[add-features]]
+== Additional Features ==
+
+=== Miscellaneous Tweaks ===
+
+Other than <<no-limitations, removing the limitations>> as mentioned above,
+a number of issues (either so reported in issue tracking or not) have been
+addressed here (e.g. notes handling, `fetch --prune` support, etc), some of
+which have been highlighted above.
+
+For example, the `refs/hg/...` refs are really an implementation detail
+that need not clutter up the (visible) ref space.  So, in as much as they
+are still relevant, these are now kept elsewhere out of sight.
+If somehow your workflow relies on having these in the old place:
+--------------------------------------
+% git config --global remote-hg.show-private-refs true
+--------------------------------------
+
+The `refs/notes/hg` mentioned above that provide info on corresponding hg
+changeset are so far only updated upon a fetch.  If you prefer to have
+these notes as soon as possible, then a push can be made to do some extra
+work on this:
+--------------------------------------
+% git config --global remote-hg.push-updates-notes true
+--------------------------------------
+
+=== Helper Commands ===
+
+Beyond that, a 'git-hg-helper' script has been added that can aid in the git-hg
+interaction workflow with a number of subcommands that are not in the purview of
+a remote helper.  This is similar to e.g. 'git-svn' being a separate program
+altogether.  These subcommands
+
+* provide conversion from a hg changeset id to a git commit hash, or vice versa
+* provide consistency maintenance on internal `git-remote-hg` metadata marks,
+which might on occasion be required or useful for efficiency
+(e.g. to avoid full fetch history processing following strip on a large Mercurial repo).
+* provide optimization of git marks of a fetch-only remote
+
+See the helper script commands' help description for further details.
+It should simply be installed (`$PATH` accessible) next to 'git-remote-hg'.
+Following git alias is probably also convenient as it allows invoking the helper
+as `git hg`:
+--------------------------------------
+% git config --global alias.hg '!git-hg-helper'
+--------------------------------------
+
+With that in place, running `git hg marks <remote>` after initial fetch from (large)
+<remote> will save quite some space in the git marks file.  Not to mention some time
+each time is loaded and saved again (upon fetch).  If the remote is ever pushed
+to, the marks file will similarly be squashed, but for a fetch-only <remote>
+the aforementioned command will do.
+
+In addition, the helper also provides support routines for `git-remote-hg` that
+provide for increased (or at least safer) git-hg bidirectionality.
+
+Before explaining how it helps, let's first elaborate on what is really
+meant by the above _bidirectionality_ since it can be regarded in 2 directions.
+From the git repo point of view, one can push to a hg repo and then fetch (or
+clone) back to git. Or one could have fetched a changeset from some hg repo and
+then push this back to (another) hg clone.  So what happens in either case? In the
+former case, from git to hg and then back, things work out ok whether or not in
+hg-git compatibility mode.  In the latter case, it is very likely (but
+ultimately not guaranteed) that it works out in hg-git compatibility mode, and far
+less likely otherwise.
+
+Most approaches on bidirectionality try to go for the "mapping" way.
+That is, find a way to map all Mercurial (meta)data somewhere into git;
+in the commit message, or in non-standard ways in extra headers in commit objects
+(e.g. the latest hg-git approach).  The upside of this is that such a git repo can be
+cloned to another git repo, and then one can push back into hg which will/should
+turn out ok.  The downside is setting up such a mapping in the first place,
+avoiding the slightest error in translating authors, timestamps etc,
+and maintaining all that whenever there is some Mercurial API/ABI breakage.
+
+The approach here is to consider a typical git-hg interaction workflow and to
+ensure simple/safe bidirectionality in such a setting.  That is, you are (obviously)
+in a situation having to deal with some Mercurial repo and quite probably
+with various clones as well. The objective is to fetch from these repos/clones,
+work in git and then push back.  And in the latter case, one needs to make sure
+that hg changesets from one hg clone end up *exactly* that way in another hg
+clone (or the git-hg bridge usage might not be so appreciated).  Such pushes are
+probably not recommended workflow practice, but no accidents or issues should
+arise from any push in these circumstances. There is less interest in this setting,
+however, for (git-wise) cloning around the derived git repo.
+
+Now, depending on your workflow and to ensure the above behaves well,
+following setting can be enabled as preferred:
+
+--------------------------------------
+% git config --global remote-hg.check-hg-commits fail
+% git config --global remote-hg.check-hg-commits push
+--------------------------------------
+
+If not set, the behaviour is as before; pushing a commit based on hg changeset
+will again transform the latter into a new hg changeset which may or may not
+match the original (as described above).
+If set to `fail`, it will reject and abort the push.
+If set to `push`, it will re-use the original changeset in a Mercurial native
+way (rather than creating a new one).  The latter guarantees the changeset ends
+up elsewhere as expected (regardless of conversion mapping or ABI).
+
+Note that identifying and re-using the hg changeset relies on metadata
+(`refs/notes/hg` and marks files) that is not managed or maintained by any
+git-to-git fetch (or clone).
+As such (and as said), this approach aims for plain-and-simple safety, but only
+within a local scope (git repo).
 
 == Contributing ==
 
