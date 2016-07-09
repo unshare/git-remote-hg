@@ -217,6 +217,7 @@ class ParserContext:
         self.localref = None
         self.remoteref = None
         self.gitmarks = None
+        self.hghelper = None
 
 class Parser:
 
@@ -907,6 +908,45 @@ def parse_commit(parser):
         parsed_refs[ref] = None
         return
 
+    # check if this is an hg commit we have in some other repo
+    gitmarks = parser.context.gitmarks
+    if gitmarks:
+        gitcommit = gitmarks.to_rev(commit_mark)
+        hgrev = get_rev_hg(gitcommit)
+        if hgrev:
+            hghelper = parser.context.hghelper
+            if not hghelper:
+                print "error %s rejected not pushing hg based commit %s" % (ref, gitcommit)
+                raise UserWarning("check-hg-commits")
+            # must be in some local repo
+            # find it and push it to the target local repo
+            # (rather than making a commit into it)
+            # probably not already in target repo, but let's make sure
+            if hgrev not in parser.repo:
+                srepo = hghelper.githgrepo.find_hg_repo(hgrev)
+                if not srepo:
+                    # pretty bad, if identified as hg revision, we should have it somewhere
+                    # but is possible if the originating repo has been removed now
+                    # warn elaborately and fail given the current settings
+                    description = "\n" \
+                        "commit %s corresponds \nto hg revision %s,\n" \
+                        "but could not find latter in any fetched hg repo.\n" \
+                        "Please resolve the inconsistency or disable pushing hg commits" \
+                            % (gitcommit, hgrev)
+                    die(description)
+                warn('Pushing hg changeset %s for %s' % (hgrev, gitcommit))
+                # target is local repo so should have a root
+                # force push since otherwise forcibly commit anyway
+                # (and needed for multiple head case etc)
+                push(srepo, hg.peer(srepo.ui, {}, parser.repo.root), [hgbin(hgrev)], True)
+            else:
+                # could already be present, particularly in shared proxy repo
+                warn('Using hg changeset %s for %s' % (hgrev, gitcommit))
+            # track mark and are done here
+            parsed_refs[ref] = hgrev
+            marks.new_mark(hgrev, commit_mark)
+            return
+
     def getfilectx(repo, memctx, f):
         of = files[f]
         if 'deleted' in of:
@@ -1420,20 +1460,48 @@ def do_push_refspec(parser, refspec):
     marks = os.path.join(dirname, 'marks-git')
     if os.path.exists(marks):
         cmd.append('--import-marks=%s' % marks)
+    # optionally reuse existing hg commits in local repos
+    check_hg_commits = get_config('remote-hg.check-hg-commits').strip()
+    use_hg_commits = check_hg_commits in ('fail', 'push')
     # no commit of marks if dry-dry_run
     # and only commit if all went ok,
     # otherwise some commits may no longer be exported next time/try around
     tmpmarks = ''
-    if not dry_run:
+    if use_hg_commits or not dry_run:
         tmpmarks = os.path.join(dirname, 'marks-git-%d' % (os.getpid()))
         cmd.append('--export-marks=%s' % tmpmarks)
     cmd.append(refs[0])
-    export = subprocess.Popen(cmd, stdin=None, stdout=subprocess.PIPE)
     # a parameter would obviously be nicer here ...
     force_push = force
     ok = False
+    tmpfastexport = None
     try:
-        ok = do_push_hg(Parser(parser.repo, export.stdout, ctx))
+        if use_hg_commits:
+            # we need the mapping from marks to commit
+            # so store the output first to a file (and marks get saved also),
+            # and then process that file
+            tmpfastexport = open(os.path.join(dirname, 'git-fast-export-%d' % (os.getpid())), 'w+b')
+            subprocess.check_call(cmd, stdin=None, stdout=tmpfastexport)
+            try:
+                import imp
+                ctx.hghelper = imp.load_source('hghelper', \
+                    os.path.join(os.path.dirname(__file__), 'git-hg-helper'))
+                ctx.hghelper.init_git(gitdir)
+                ctx.gitmarks = ctx.hghelper.GitMarks(tmpmarks)
+                # let processing know it should not bother pushing if not requested
+                if check_hg_commits != 'push':
+                    ctx.hghelper = None
+            except:
+                die("check-hg-commits setup failed; is git-hg-helper also installed?")
+            tmpfastexport.seek(0)
+            try:
+                ok = do_push_hg(Parser(parser.repo, tmpfastexport, ctx))
+            except UserWarning:
+                ok = False
+        else:
+            # simply feed fast-export directly to processing
+            export = subprocess.Popen(cmd, stdin=None, stdout=subprocess.PIPE)
+            ok = do_push_hg(Parser(parser.repo, export.stdout, ctx))
     finally:
         if tmpmarks and os.path.exists(tmpmarks):
             if ok and not dry_run:
@@ -1441,6 +1509,9 @@ def do_push_refspec(parser, refspec):
                 os.rename(tmpmarks, marks)
             else:
                 os.remove(tmpmarks)
+        if tmpfastexport and os.path.exists(tmpfastexport.name):
+            tmpfastexport.close()
+            os.remove(tmpfastexport.name)
 
 def do_push(parser):
     if os.environ.get('GIT_REMOTE_HG_DEBUG_PUSH'):

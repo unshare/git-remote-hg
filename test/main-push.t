@@ -61,4 +61,89 @@ test_expect_success 'source:dest bookmark' '
 	check_bookmark hgrepo feature-a one
 '
 
+setup_check_hg_commits_repo () {
+        (
+	rm -rf hgrepo* &&
+	hg init hgrepo &&
+	cd hgrepo &&
+	echo zero > content &&
+	hg add content &&
+	hg commit -m zero
+	) &&
+
+	git clone "hg::hgrepo" gitrepo &&
+	hg clone hgrepo hgrepo.second &&
+
+	(
+	cd gitrepo &&
+	git remote add second hg::../hgrepo.second &&
+	git fetch second
+	) &&
+
+	(
+	cd hgrepo &&
+	echo one > content &&
+	hg commit -m one &&
+	echo two > content &&
+	hg commit -m two &&
+	echo three > content &&
+	hg commit -m three &&
+	hg move content content-move &&
+	hg commit -m moved &&
+	hg move content-move content &&
+	hg commit -m restored
+        )
+}
+
+git config --global remote-hg.check-hg-commits fail
+test_expect_success 'check-hg-commits with fail mode' '
+	test_when_finished "rm -rf gitrepo* hgrepo*" &&
+
+	setup_check_hg_commits_repo &&
+
+	(
+	cd gitrepo &&
+	git fetch origin &&
+	git reset --hard origin/master &&
+	! git push second master 2>../error
+	)
+
+	cat error &&
+	grep rejected error | grep hg
+'
+
+git config --global remote-hg.check-hg-commits push
+# codepath for push is slightly different depending on shared proxy involved
+# so tweak to test both
+check_hg_commits_push () {
+	test_when_finished "rm -rf gitrepo* hgrepo*" &&
+
+	setup_check_hg_commits_repo &&
+
+	(
+	cd gitrepo &&
+	git fetch origin &&
+	git reset --hard origin/master &&
+	git push second master 2> ../error
+	) &&
+
+	cat error &&
+	grep "hg changeset" error &&
+
+	hg log -R hgrepo > expected &&
+	hg log -R hgrepo.second | grep -v bookmark > actual &&
+	test_cmp expected actual
+}
+
+unset GIT_REMOTE_HG_TEST_REMOTE
+test_expect_success 'check-hg-commits with push mode - no local proxy' '
+	check_hg_commits_push
+'
+
+GIT_REMOTE_HG_TEST_REMOTE=1 &&
+export GIT_REMOTE_HG_TEST_REMOTE
+test_expect_success 'check-hg-commits with push mode - with local proxy' '
+	check_hg_commits_push
+'
+
 test_done
