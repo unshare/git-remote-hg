@@ -371,8 +371,19 @@ def fixup_user(user):
 
 def updatebookmarks(repo, peer):
     remotemarks = peer.listkeys('bookmarks')
-    localmarks = repo._bookmarks
 
+    # delete bookmarks locally that disappeared on remote
+    localmarks = bookmarks.listbookmarks(repo)
+    remote = set(remotemarks.keys())
+    local = set(localmarks.keys())
+    for bmark in local - remote:
+        bookmarks.pushbookmark(repo, bmark, localmarks[bmark], '')
+        # also delete private ref
+        pbookmark = '%s/bookmarks/%s' % (prefix, bmark)
+        subprocess.call(['git', 'update-ref', '-d', pbookmark])
+
+    # now add or update remote bookmarks to local, if any
+    localmarks = repo._bookmarks
     if not remotemarks:
         return
 
@@ -1320,8 +1331,8 @@ def main(args):
     dry_run = False
     notes = set()
 
-    repo = get_repo(url, alias)
     prefix = 'refs/hg/%s' % alias
+    repo = get_repo(url, alias)
 
     if not is_tmp:
         fix_path(alias, peer or repo, url)

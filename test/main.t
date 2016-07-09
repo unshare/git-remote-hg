@@ -783,6 +783,35 @@ test_expect_success 'remote double failed push' '
 	test_expect_code 1 git push
 	)
 '
+test_expect_success 'fetch prune' '
+	test_when_finished "rm -rf gitrepo hgrepo" &&
+
+	(
+	hg init hgrepo &&
+	cd hgrepo &&
+	echo zero > content &&
+	hg add content &&
+	hg commit -m zero &&
+	echo feature-a > content &&
+	hg commit -m feature-a
+	hg bookmark feature-a
+	) &&
+
+	git clone "hg::hgrepo" gitrepo &&
+	check gitrepo origin/feature-a feature-a &&
+
+	(
+	cd hgrepo &&
+	hg bookmark -d feature-a
+	) &&
+
+	(
+	cd gitrepo &&
+	git fetch --prune origin
+	git branch -a > out &&
+	! grep feature-a out
+	)
+'
 
 test_expect_success 'clone remote with null bookmark, then push' '
 	test_when_finished "rm -rf gitrepo* hgrepo*" &&
