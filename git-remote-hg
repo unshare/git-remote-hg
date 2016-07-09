@@ -1078,8 +1078,15 @@ def push_unsafe(repo, remote, parsed_refs, p_revs):
     fci = discovery.findcommonincoming
     commoninc = fci(repo, remote, force=force)
     common, _, remoteheads = commoninc
+    fco = discovery.findcommonoutgoing
+    outgoing = fco(repo, remote, onlyheads=list(p_revs), commoninc=commoninc, force=force)
 
     if not checkheads(repo, remote, p_revs):
+        return False
+
+    # nice to know about this rather than assume a bogus error
+    # also, some remote peertypes might otherwise be surprised further down
+    if not outgoing.missing:
         return None
 
     if check_version(3, 2):
@@ -1230,7 +1237,9 @@ def do_export(parser):
         return
 
     if peer:
-        if not push(parser.repo, peer, parsed_refs, p_revs):
+        ret = push(parser.repo, peer, parsed_refs, p_revs)
+        # None ok: nothing to push
+        if ret != None and not ret:
             # do not update bookmarks
             print
             return

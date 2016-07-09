@@ -882,7 +882,7 @@ test_expect_failure 'push updates notes' '
 	test_cmp expected actual
 '
 
-test_expect_failure 'push bookmark without changesets' '
+test_expect_success 'push bookmark without changesets' '
 	test_when_finished "rm -rf hgrepo gitrepo" &&
 
 	(
