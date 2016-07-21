@@ -295,6 +295,55 @@ git-to-git fetch (or clone).
 As such (and as said), this approach aims for plain-and-simple safety, but only
 within a local scope (git repo).
 
+=== Mercurial Subrepository Support ===
+
+Both Git and Mercurial support a submodule/subrepo system.
+In case of Git, URLs are managed in `.gitmodules`, submodule state is tracked
+in tree objects and only Git submodules are supported.
+Mercurial manages URLs in `.hgsub`, records subrepo state in `.hgsubstate` and
+supports Git, Mercurial and Subversion subrepos (at time of writing).
+Merely the latter diversity in subrepo types shows that somehow mapping Mercurial
+"natively" to git submodules is not quite evident.  Moreover, while one might
+conceivably devise such a mapping restricted to git and hg subrepos, any such would
+seem error-prone and fraught with all sorts of tricky cases and inconvenient
+workflow handling (innovative robust suggestions are welcome though ...)
+
+So, rather than overtaking the plumbing and ending up with stuffed drain further on,
+the approach here is (again) to keep it plain-and-simple.  That is, provide some
+git-ish look-and-feel helper script commands for setting up and manipulating
+subrepos.  And so (if the alias mentioned above has been defined), `git hg sub`
+provides commands similar to `git submodule` that accomplish what is otherwise
+taken care of by the Mercurial subrepo support.
+The latter is obviously extended to be git-aware in that e.g. a Mercurial subrepo
+is cloned as a git-hg subrepo and translation back-and-forth between hg changeset id
+and git commit hash is also performed where needed.  There is no support though
+for Subversion subrepos.
+
+As with the other commands, see the help description for the proper details,
+but the following example session may clarify the principle:
+
+--------------------------------------
+% git clone hg::hgparentrepo
+# bring in subrepos in proper location:
+% git hg sub update
+# do some work
+% git pull --rebase origin
+# update subrepo state:
+% git hg sub update
+# do work in subrepo and push
+% ( cd subrepo && git push origin HEAD:master )
+# fetch to update refs/notes/hg (or enable remote-hg.push-updates-notes)
+% ( cd subrepo && git fetch origin )
+# update .hgsubstate to subrepo HEAD:
+% git hg sub upstate
+% git add .hgsubstate
+# add more, commit and push as intended
+--------------------------------------
+
+Note that the refspec `HEAD:master` is needed if working with detached `HEAD`
+in subrepo, and that pushing such refspec is actually supported now in a git-hg subrepo
+as explained <<no-limitations, earlier>>.
+
 == Contributing ==
 
 Please file an issue with some patches or a pull-request.
