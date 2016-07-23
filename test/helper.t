@@ -176,4 +176,366 @@ test_expect_success 'subcommand [some-repo]' '
 	test_cmp expected actual
 '
 
+setup_repo () {
+    kind=$1 &&
+    repo=$2 &&
+    $kind init $repo &&
+    (
+    cd $repo &&
+    echo zero > content_$repo &&
+    $kind add content_$repo &&
+    $kind commit -m zero_$repo
+    )
+}
+
+check () {
+	echo $3 > expected &&
+	git --git-dir=$1/.git log --format='%s' -1 $2 > actual &&
+	test_cmp expected actual
+}
+
+check_branch () {
+	if test -n "$3"
+	then
+		echo $3 > expected &&
+		hg -R $1 log -r $2 --template '{desc}\n' > actual &&
+		test_cmp expected actual
+	else
+		hg -R $1 branches > out &&
+		! grep $2 out
+	fi
+}
+
+test_expect_success 'subcommand sub initial update (hg and git subrepos)' '
+	test_when_finished "rm -rf gitrepo* hgrepo*" &&
+
+	setup_repo hg hgrepo &&
+	(
+	cd hgrepo &&
+	setup_repo hg sub_hg_a &&
+	setup_repo hg sub_hg_b &&
+	setup_repo git sub_git &&
+	echo "sub_hg_a = sub_hg_a" > .hgsub &&
+	echo "sub_hg_b = sub_hg_b" >> .hgsub &&
+	echo "sub_git = [git]sub_git" >> .hgsub &&
+	hg add .hgsub &&
+	hg commit -m substate
+	)
+
+	git clone hg::hgrepo gitrepo &&
+
+	(
+	cd gitrepo &&
+	git-hg-helper sub update --force &&
+	test -f content_hgrepo &&
+	test -f sub_hg_a/content_sub_hg_a &&
+	test -f sub_hg_b/content_sub_hg_b &&
+	test -f sub_git/content_sub_git
+	) &&
+
+	check gitrepo HEAD substate &&
+	check gitrepo/sub_hg_a HEAD zero_sub_hg_a &&
+	check gitrepo/sub_hg_b HEAD zero_sub_hg_b &&
+	check gitrepo/sub_git HEAD zero_sub_git
+'
+
+setup_subrepos () {
+	setup_repo hg hgrepo &&
+	(
+	cd hgrepo &&
+	setup_repo hg sub_hg_a &&
+		(
+		cd sub_hg_a &&
+		setup_repo hg sub_hg_a_x &&
+		echo "sub_hg_a_x = sub_hg_a_x" > .hgsub &&
+		hg add .hgsub &&
+		hg commit -m substate_hg_a
+		) &&
+	setup_repo hg sub_hg_b &&
+		(
+		cd sub_hg_b &&
+		setup_repo git sub_git &&
+		echo "sub_git = [git]sub_git" > .hgsub &&
+		hg add .hgsub &&
+		hg commit -m substate_hg_b
+		) &&
+	echo "sub_hg_a = sub_hg_a" > .hgsub &&
+	echo "sub_hg_b = sub_hg_b" >> .hgsub &&
+	hg add .hgsub &&
+	hg commit -m substate
+	)
+}
+
+test_expect_success 'subcommand sub initial recursive update' '
+	test_when_finished "rm -rf gitrepo* hgrepo*" &&
+
+	setup_subrepos &&
+
+	git clone hg::hgrepo gitrepo &&
+
+	(
+	cd gitrepo &&
+	git-hg-helper sub --recursive update --force &&
+	test -f content_hgrepo &&
+	test -f sub_hg_a/content_sub_hg_a &&
+	test -f sub_hg_a/sub_hg_a_x/content_sub_hg_a_x &&
+	test -f sub_hg_b/content_sub_hg_b &&
+	test -f sub_hg_b/sub_git/content_sub_git
+	) &&
+
+	check gitrepo HEAD substate &&
+	check gitrepo/sub_hg_a HEAD substate_hg_a &&
+	check gitrepo/sub_hg_b HEAD substate_hg_b &&
+	check gitrepo/sub_hg_a/sub_hg_a_x HEAD zero_sub_hg_a_x &&
+	check gitrepo/sub_hg_b/sub_git HEAD zero_sub_git
+'
+
+test_sub_update () {
+	export option=$1
+
+	setup_subrepos &&
+
+	git clone hg::hgrepo gitrepo &&
+
+	(
+	cd gitrepo &&
+	git-hg-helper sub --recursive update --force
+	) &&
+
+	(
+	cd hgrepo &&
+		(
+		 cd sub_hg_a &&
+			(
+			cd sub_hg_a_x &&
+			echo one > content_sub_hg_a_x &&
+			hg commit -m one_sub_hg_a_x
+			) &&
+		hg commit -m substate_updated_hg_a
+		) &&
+	hg commit -m substate_updated
+	) &&
+
+	(
+	cd gitrepo &&
+	git fetch origin &&
+	git merge origin/master &&
+	git-hg-helper sub --recursive update --force $option &&
+	test -f content_hgrepo &&
+	test -f sub_hg_a/content_sub_hg_a &&
+	test -f sub_hg_a/sub_hg_a_x/content_sub_hg_a_x &&
+	test -f sub_hg_b/content_sub_hg_b &&
+	test -f sub_hg_b/sub_git/content_sub_git
+	) &&
+
+	check gitrepo HEAD substate_updated &&
+	check gitrepo/sub_hg_a HEAD substate_updated_hg_a &&
+	check gitrepo/sub_hg_b HEAD substate_hg_b &&
+	check gitrepo/sub_hg_a/sub_hg_a_x HEAD one_sub_hg_a_x &&
+	check gitrepo/sub_hg_b/sub_git HEAD zero_sub_git
+}
+
+test_expect_success 'subcommand sub subsequent recursive update' '
+	test_when_finished "rm -rf gitrepo* hgrepo*" &&
+
+	test_sub_update
+'
+
+test_expect_success 'subcommand sub subsequent recursive update -- rebase' '
+	test_when_finished "rm -rf gitrepo* hgrepo*" &&
+
+	test_sub_update --rebase
+'
+
+test_expect_success 'subcommand sub subsequent recursive update -- merge' '
+	test_when_finished "rm -rf gitrepo* hgrepo*" &&
+
+	test_sub_update --merge
+'
+
+check_foreach_vars () {
+	cat $1 | while read kind sha1 rev path remainder
+	do
+	    ok=0
+	    if test "$kind" = "hg" ; then
+			if test "$sha1" != "$rev" ; then
+				ok=1
+			fi
+	    else
+			if test "$sha1" = "$rev" ; then
+				ok=1
+			fi
+	    fi
+	    test $ok -eq 1 || echo "invalid $kind $sha1 $rev $path"
+	    test $ok -eq 1 || return 1
+	done &&
+
+	return 0
+}
+
+test_sub_foreach () {
+	setup_subrepos &&
+
+	git clone hg::hgrepo gitrepo &&
+
+	(
+	cd gitrepo &&
+	git-hg-helper sub --recursive update --force &&
+	git-hg-helper sub --recursive --quiet foreach 'echo $kind $sha1 $rev $path $toplevel' > output &&
+	cat output &&
+	echo 1 > expected_git &&
+	grep -c ^git output > actual_git &&
+	test_cmp expected_git actual_git &&
+	echo 3 > expected_hg &&
+	grep -c ^hg output > actual_hg &&
+	test_cmp expected_hg actual_hg &&
+	grep '\(hg\|git\) [0-9a-f]* [0-9a-f]* sub[^ ]* /.*' output > actual &&
+	test_cmp output actual &&
+	check_foreach_vars output
+	)
+}
+
+test_expect_success 'subcommand sub foreach' '
+	test_when_finished "rm -rf gitrepo* hgrepo*" &&
+
+	test_sub_foreach
+'
+
+test_expect_success 'subcommand sub sync' '
+	test_when_finished "rm -rf gitrepo* hgrepo*" &&
+
+	setup_repo hg hgrepo &&
+	(
+	cd hgrepo &&
+	setup_repo hg sub_hg &&
+	echo "sub_hg = sub_hg" > .hgsub &&
+	hg add .hgsub &&
+	hg commit -m substate
+	)
+
+	git clone hg::hgrepo gitrepo &&
+
+	(
+	cd gitrepo &&
+	git-hg-helper sub update --force &&
+
+		(
+		cd sub_hg &&
+		grep url .git/config > ../expected &&
+		git config remote.origin.url foobar &&
+		grep foobar .git/config
+		) &&
+
+	git-hg-helper sub sync &&
+	grep url sub_hg/.git/config > actual &&
+	test_cmp expected actual
+	)
+'
+
+test_expect_success 'subcommand sub addstate' '
+	test_when_finished "rm -rf gitrepo* hgrepo*" &&
+
+	setup_repo hg hgrepo &&
+	(
+	cd hgrepo &&
+	setup_repo hg sub_hg &&
+	setup_repo git sub_git &&
+	echo "sub_hg = sub_hg" > .hgsub &&
+	echo "sub_git = [git]sub_git" >> .hgsub &&
+	hg add .hgsub &&
+	hg commit -m substate
+	)
+
+	git clone hg::hgrepo gitrepo &&
+
+	(
+	cd gitrepo &&
+	git-hg-helper sub update --force &&
+
+		(
+		cd sub_hg &&
+		echo one > content_sub_hg &&
+		git add content_sub_hg &&
+		git commit -m one_sub_hg &&
+		# detached HEAD
+		git push origin HEAD:master &&
+		# also fetch to ensure notes are updated
+		git fetch origin
+		) &&
+
+		(
+		cd sub_git &&
+		echo one > content_sub_git &&
+		git add content_sub_git &&
+		git commit -m one_sub_git &&
+		# detached HEAD; push revision to other side ... anywhere
+		git push origin HEAD:refs/heads/new
+		)
+	) &&
+
+	(
+	cd gitrepo &&
+	git-hg-helper sub upstate &&
+	git diff &&
+	git status --porcelain | grep .hgsubstate &&
+	git add .hgsubstate &&
+	git commit -m update_sub &&
+	git push origin master
+	) &&
+
+	hg clone hgrepo hgclone &&
+
+	(
+	cd hgclone &&
+	hg update
+	) &&
+
+	check_branch hgclone default update_sub &&
+	check_branch hgclone/sub_hg default one_sub_hg &&
+	check hgclone/sub_git HEAD one_sub_git
+'
+
+test_expect_success 'subcommand sub status' '
+	test_when_finished "rm -rf gitrepo* hgrepo*" &&
+
+	setup_repo hg hgrepo &&
+	(
+	cd hgrepo &&
+	setup_repo hg sub_hg_a &&
+	setup_repo hg sub_hg_b &&
+	setup_repo git sub_git &&
+	echo "sub_hg_a = sub_hg_a" > .hgsub &&
+	echo "sub_hg_b = sub_hg_b" >> .hgsub &&
+	echo "sub_git = [git]sub_git" >> .hgsub &&
+	hg add .hgsub &&
+	hg commit -m substate
+	)
+
+	git clone hg::hgrepo gitrepo &&
+
+	(
+	cd gitrepo &&
+	git-hg-helper sub update sub_hg_a --force &&
+	git-hg-helper sub update sub_git --force &&
+		(
+		# advance and add a tag to the git repo
+		cd sub_git &&
+		echo one > content_sub_git &&
+		git add content_sub_git &&
+		git commit -m one_sub_git &&
+		git tag feature-a
+		) &&
+
+	git-hg-helper sub status --cached > output &&
+	cat output &&
+	grep "^ .*sub_hg_a (.*master.*)$" output &&
+	grep "^-.*sub_hg_b$" output &&
+	grep "^+.*sub_git (feature-a~1)$" output &&
+	git-hg-helper sub status sub_git > output &&
+	cat output &&
+	grep "^+.*sub_git (feature-a)$" output > actual &&
+	test_cmp output actual
+	)
+'
+
 test_done

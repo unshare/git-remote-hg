@@ -4,6 +4,7 @@
 #
 
 from mercurial import hg, ui, commands, util
+from mercurial import context, subrepo
 
 import re
 import sys
@@ -174,6 +175,84 @@ class GitHgRepo:
             # if this one had it, we are done
             if srepo and rev in srepo and srepo[rev]:
                 return srepo
+
+    def rev_describe(self, rev):
+        result = self.run_cmd(['describe', rev]) or \
+            self.run_cmd(['describe', '--tags', rev]) or \
+            self.run_cmd(['describe', '--contains', rev]) or \
+            self.run_cmd(['describe', '--all', '--always', rev])
+        return result.strip()
+
+    class dictmemctx(context.memctx):
+
+        def __init__(self, repo, files):
+            p1, p2, data = repo[None], '0' * 40, ''
+            context.memctx.__init__(self, repo, (p1, p2),
+                data, files.keys(), self.getfilectx)
+            self.files = files
+
+        def __contains__(self, item):
+            return item in self.files
+
+        def getfilectx(self, repo, memctx, path):
+            is_exec = is_link = rename = False
+            if check_version(3, 1):
+                return context.memfilectx(repo, path, self.files[path],
+                        is_link, is_exec, rename)
+            else:
+                return context.memfilectx(path, self.files[path],
+                        is_link, is_exec, rename)
+
+    def read(self, relpath, rev=None):
+        rev = rev if rev else ':0'
+        obj = '%s:%s' % (rev, relpath)
+        # might complain bitterly to stderr if no subrepos so let's not show that
+        return self.run_cmd(['show', obj])
+
+    # see also subrepo.state
+    def state(self, remote='origin', rev=None):
+        """return a state dict, mapping subrepo paths configured in .hgsub
+        to tuple: (source from .hgsub, revision from .hgsubstate, kind
+        (key in types dict))
+        """
+
+        # obtain relevant files' content from specified revision
+        files = { }
+        for f in ('.hgsub', '.hgsubstate'):
+            files[f] = self.read(f)
+        log('state files for %s in revision %s:\n%s', remote, rev, files)
+
+        # wrap in a context and delegate to subrepo
+        # (rather than duplicating the admittedly simple parsing here)
+        repo = self.get_hg_repo(remote)
+        if not repo:
+            die('no hg repo for alias %s' % remote)
+        ctx = self.dictmemctx(repo, files)
+        state = subrepo.state(ctx, ui.ui())
+        log('obtained state %s', state)
+
+        # now filter on type and resolve relative urls
+        import posixpath
+        resolved = {}
+        for s in state:
+            src, rev, kind = state[s]
+            if not kind in ('hg', 'git'):
+                warn('skipping unsupported subrepo type %s' % kind)
+                continue
+            if not util.url(src).isabs():
+                parent = self.get_hg_repo_url(remote)
+                if not parent:
+                    die('could not determine repo url of %s' % remote)
+                parent = util.url(parent)
+                parent.path = posixpath.join(parent.path or '', src)
+                parent.path = posixpath.normpath(parent.path)
+                src = str(parent)
+            # translate to git view url
+            if kind == 'hg':
+                src = 'hg::' + src
+            resolved[s] = (src.strip(), rev or '', kind)
+        log('resolved state %s', resolved)
+        return resolved
 
 
 class SubCommand:
@@ -405,6 +484,304 @@ class MarksCommand(SubCommand):
                 gm.store()
 
 
+class SubRepoCommand(SubCommand):
+
+    def writestate(repo, state):
+        """rewrite .hgsubstate in (outer) repo with these subrepo states"""
+        lines = ['%s %s\n' % (state[s][1], s) for s in sorted(state)
+                                                    if state[s][1] != nullstate[1]]
+        repo.wwrite('.hgsubstate', ''.join(lines), '')
+
+    def argumentparser(self):
+        #usage = '%%(prog)s %s [options] <remote>...' % (self.subcommand)
+        # argparse.ArgumentParser(parents=[common])
+        # top-level
+        p = argparse.ArgumentParser(
+            formatter_class=argparse.RawDescriptionHelpFormatter)
+        p.add_argument('--quiet', '-q', action='store_true')
+        p.add_argument('--recursive', '-r', action='store_true',
+            help='recursive execution in each submodule')
+        p.add_argument('--remote', metavar='ALIAS', default='origin',
+            help='remote alias to use as base for relative url')
+        p.epilog = textwrap.dedent("""\
+        A group of (sub-)subcommands that aid in handling Mercurial subrepos
+        as managed by .hgsub and .hgsubstate.  The commands are (where applicable)
+        loosely modeled after the corresponding and similar git-submodule command,
+        though otherwise there is no relation whatsoever with the git-submodule system.
+        Each command supports recursive execution into subrepos of subrepos,
+        and the considered (top-level) repos can be restricted by a list of subrepo
+        paths as arguments.  For most commands, the state files are examined
+        in the parent repo's index.
+
+        Though depending on your workflow, the \'update\' command will likely
+        suffice, along with possibly an occasional \'upstate\'.
+        """)
+        # subparsers
+        sub = p.add_subparsers()
+        # common
+        common = argparse.ArgumentParser(add_help=False)
+        common.add_argument('paths', nargs=argparse.REMAINDER)
+        # update
+        p_update = sub.add_parser('update', parents=[common],
+            help='update subrepos to state as specified in parent repo')
+        p_update.set_defaults(func=self.cmd_update)
+        p_update.add_argument('--rebase', action='store_true',
+            help='rebase the subrepo current branch onto recorded superproject commit')
+        p_update.add_argument('--merge', action='store_true',
+            help='merge recorded superproject commit into the current branch of subrepo')
+        p_update.add_argument('--force', action='store_true',
+            help='throw away local changes when switching to a different commit')
+        p_update.epilog = textwrap.dedent("""\
+        Brings all subrepos in the state as specified by the parent repo.
+        If not yet present in the subpath, the subrepo is cloned from the URL
+        specified by the parent repo (resolving relative path wrt a parent repo URL).
+        If already present, and target state revision is ancestor of current HEAD,
+        no update is done.  Otherwise, a checkout to the required revision is done
+        (optionally forcibly so).  Alternatively, a rebase or merge is performed if
+        so requested by the corresponding option.
+        """)
+        # foreach
+        p_foreach = sub.add_parser('foreach',
+            help='evaluate shell command in each checked out subrepo')
+        p_foreach.set_defaults(func=self.cmd_foreach)
+        p_foreach.add_argument('command', help='shell command')
+        p_foreach.epilog = textwrap.dedent("""\
+        The command is executed in the subrepo directory and has access to
+        the variables $path, $toplevel, $sha1, $rev and $kind.
+        $path is the subrepo directory relative to the parent project.
+        $toplevel is the absolute path to the top-level of the parent project.
+        $rev is the state revision info as set in .hgsubstate whereas
+        $sha1 is the git commit corresponding to it (which may be identical
+        if subrepo is a git repo).  $kind is the type of subrepo, e.g. git or hg.
+        Unless given --quiet, the (recursively collected) submodule path is printed
+        before evaluating the command.  A non-zero return from the command in
+        any submodule causes the processing to terminate.
+        """)
+        # add state
+        p_upstate = sub.add_parser('upstate', parents=[common],
+            help='update .hgsubstate to current HEAD of subrepo')
+        p_upstate.set_defaults(func=self.cmd_upstate)
+        p_upstate.epilog = textwrap.dedent("""\
+        Rather than dealing with the index the .hgsubstate file is simply and only
+        edited to reflect the current HEAD of (all or selected) subrepos
+        (and any adding to index and committing is left to user's discretion).
+        """)
+        # status
+        p_status = sub.add_parser('status', parents=[common],
+            help='show the status of the subrepos')
+        p_status.add_argument('--cached', action='store_true',
+            help='show index .hgsubstate revision if != subrepo HEAD')
+        p_status.set_defaults(func=self.cmd_status)
+        p_status.epilog = textwrap.dedent("""\
+        This will print the SHA-1 of the currently checked out commit for each
+        subrepo, along with the subrepo path and the output of git describe for
+        the SHA-1.  Each SHA-1 will be prefixed with - if the submodule is not
+        yet set up (i.e. cloned) and + if the currently checked out submodule commit
+        does not match the SHA-1 found in the parent repo index state.
+        """)
+        # sync
+        p_sync = sub.add_parser('sync', parents=[common],
+            help='synchronize subrepo\'s remote URL configuration with parent configuration')
+        p_sync.set_defaults(func=self.cmd_sync)
+        p_sync.epilog = textwrap.dedent("""\
+        The subrepo's .git/config URL configuration is set to the value specified in
+        the parent's .hgstate (with relative path suitable resolved wrt parent project).
+        """)
+        return p
+
+    def git_hg_repo_try(self, path):
+        try:
+            return GitHgRepo(topdir=path)
+        except:
+            return None
+
+    def run_cmd(self, options, repo, *args, **kwargs):
+        # no output if quiet, otherwise show output by default
+        # unless the caller specified something explicitly
+        if hasattr(options, 'quiet') and options.quiet:
+            kwargs['stdout'] = os.devnull
+        elif 'stdout' not in kwargs:
+            kwargs['stdout'] = None
+        # show errors unless caller decide some way
+        if 'stderr' not in kwargs:
+            kwargs['stderr'] = None
+        repo.run_cmd(*args, **kwargs)
+
+    class subcontext(dict):
+        __getattr__= dict.__getitem__
+        __setattr__= dict.__setitem__
+        __delattr__= dict.__delitem__
+        def __init__(self, repo):
+            # recursion level
+            self.level = 0
+            # super repo object
+            self.repo = repo
+            # sub repo object (if any)
+            self.subrepo = None
+            # (recursively) collected path of subrepo
+            self.subpath = None
+            # relative path of subrepo wrt super repo
+            self.relpath = None
+
+    def do(self, options, args):
+        if args:
+            # all arguments are registered, so should not have leftover
+            # could be that main arguments were given to subcommands
+            warn('unparsed arguments: %s' % ' '.join(args))
+        log('running subcmd options %s, args %s', options, args)
+        # establish initial operation ctx
+        ctx = self.subcontext(self.githgrepo)
+        self.do_operation(options, args, ctx)
+
+    def do_operation(self, options, args, ctx):
+        log('running %s with options %s in context %s', \
+            options.func, options, ctx)
+        subrepos = ctx.repo.state(options.remote)
+        paths = subrepos.keys()
+        selabspaths = None
+        if ctx.level == 0 and hasattr(options, 'paths') and options.paths:
+            selabspaths = [ os.path.abspath(p) for p in options.paths ]
+        log('level %s selected paths %s', ctx.level, selabspaths)
+        for p in paths:
+            # prep context
+            ctx.relpath = p
+            ctx.subpath = os.path.join(ctx.repo.topdir, p)
+            # check if selected
+            abspath = os.path.abspath(ctx.subpath)
+            if selabspaths != None and abspath not in selabspaths:
+                log('skipping subrepo abspath %s' % abspath)
+                continue
+            ctx.subrepo = self.git_hg_repo_try(ctx.subpath)
+            ctx.state = subrepos[p]
+            # perform operation
+            log('exec for context %s', ctx)
+            options.func(options, args, ctx)
+            if not ctx.subrepo:
+                ctx.subrepo = self.git_hg_repo_try(ctx.subpath)
+            # prep recursion (only into git-hg subrepos)
+            if ctx.subrepo and options.recursive and ctx.state[2] == 'hg':
+                newctx = self.subcontext(ctx.subrepo)
+                newctx.level = ctx.level + 1
+                self.do_operation(options, args, newctx)
+
+    def get_git_commit(self, ctx):
+        src, rev, kind = ctx.state
+        if kind == 'hg':
+            gitcommit = ctx.subrepo.get_git_commit(rev)
+            if not gitcommit:
+                die('could not determine git commit for %s; a fetch may update notes' % rev)
+        else:
+            gitcommit = rev
+        return gitcommit
+
+    def cmd_upstate(self, options, args, ctx):
+        if not ctx.subrepo:
+            return
+        src, orig, kind = ctx.state
+        gitcommit = ctx.subrepo.rev_parse('HEAD')
+        if not gitcommit:
+            die('could not determine current HEAD state in %s' % ctx.subrepo.topdir)
+        rev = gitcommit
+        if kind == 'hg':
+            rev = ctx.subrepo.get_hg_rev(gitcommit)
+            if not rev:
+                die('could not determine hg changeset for commit %s' % gitcommit)
+        else:
+            rev = gitcommit
+        # obtain state from index
+        state_path = os.path.join(ctx.repo.topdir, '.hgsubstate')
+        # should have this, since we have subrepo (state) in the first place ...
+        if not os.path.exists(state_path):
+            die('no .hgsubstate found in repo %s' % ctx.repo.topdir)
+        if orig != rev:
+            short = ctx.subrepo.rev_parse(['--short', gitcommit])
+            print "Updating %s to %s [git %s]" % (ctx.subpath, rev, short)
+            # replace and update index
+            with open(state_path, 'r') as f:
+                state = f.read()
+            state = re.sub('.{40} %s' % (ctx.relpath), '%s %s' % (rev, ctx.relpath), state)
+            with open(state_path, 'wb') as f:
+                f.write(state)
+
+    def cmd_foreach(self, options, args, ctx):
+        if not ctx.subrepo:
+            return
+        if not options.quiet:
+            print 'Entering %s' % ctx.subpath
+            sys.stdout.flush()
+        newenv = os.environ.copy()
+        newenv['path'] = ctx.relpath
+        newenv['sha1'] = self.get_git_commit(ctx)
+        newenv['toplevel'] = os.path.abspath(ctx.repo.topdir)
+        newenv['rev'] = ctx.state[1]
+        newenv['kind'] = ctx.state[2]
+        proc = subprocess.Popen(options.command, shell=True, cwd=ctx.subpath, env=newenv)
+        proc.wait()
+        if proc.returncode != 0:
+            die('stopping at %s; script returned non-zero status' % ctx.subpath)
+
+    def cmd_update(self, options, args, ctx):
+        if not ctx.subrepo:
+            src, _, _ = ctx.state
+            self.run_cmd(options, ctx.repo, ['clone', src, ctx.subpath], cwd=None)
+            ctx.subrepo = self.git_hg_repo_try(ctx.subpath)
+            if not ctx.subrepo:
+                die('subrepo %s setup clone failed', ctx.subpath)
+            # force (detached) checkout of target commit following clone
+            cmd = [ 'checkout', '-q' ]
+        else:
+            self.run_cmd(options, ctx.subrepo, ['fetch', 'origin'], check=True)
+            cmd = []
+        # check if subrepo is up-to-date,
+        # i.e. if target commit is ancestor of HEAD
+        # (output never to be shown)
+        gitcommit = self.get_git_commit(ctx)
+        newrev = ctx.subrepo.run_cmd(['rev-list', gitcommit, '^HEAD']).strip()
+        if newrev and not cmd:
+            if options.force:
+                self.run_cmd(options, ctx.subrepo, ['reset', '--hard', 'HEAD'],
+                    check=True)
+            if options.rebase:
+                cmd = [ 'rebase' ]
+            elif options.merge:
+                cmd = [ 'merge' ]
+            else:
+                # we know about the detached consequences ... keep it a bit quiet
+                cmd = [ 'checkout', '-q' ]
+        if cmd:
+            cmd.append(gitcommit)
+            self.run_cmd(options, ctx.subrepo, cmd, check=True)
+
+    def cmd_status(self, options, args, ctx):
+        if not ctx.subrepo:
+            state = '-'
+            revname = ''
+            _, gitcommit, kind = ctx.state
+            if kind != 'git':
+                gitcommit += '[hg] '
+        else:
+            gitcommit = self.get_git_commit(ctx)
+            head = ctx.subrepo.rev_parse('HEAD')
+            if head == gitcommit:
+                state = ' '
+            else:
+                state = '+'
+                # option determines what to print
+                if not options.cached:
+                    gitcommit = head
+            revname = ctx.subrepo.rev_describe(gitcommit)
+            if revname:
+                revname = ' (%s)' % revname
+        print "%s%s %s%s" % (state, gitcommit, ctx.subpath, revname)
+
+    def cmd_sync(self, options, args, ctx):
+        if not ctx.subrepo:
+            return
+        src, _, _ = ctx.state
+        self.run_cmd(options, ctx.subrepo, \
+            ['config', 'remote.%s.url' % (options.remote), src])
+
+
 class RepoCommand(SubCommand):
 
     def argumentparser(self):
@@ -471,6 +848,7 @@ def get_subcommands():
         'git-rev': GitRevCommand,
         'repo': RepoCommand,
         'marks':  MarksCommand,
+        'sub': SubRepoCommand,
         'help' : HelpCommand
     }
     # add remote named subcommands
@@ -491,6 +869,7 @@ def do_usage():
     hg-rev  \t show hg revision corresponding to a git revision
     git-rev \t find git revision corresponding to a hg revision
     marks   \t perform maintenance on repo tracking marks
+    sub     \t manage subrepos
     repo    \t show local hg repo backing a remote
 
     If the subcommand is the name of a remote hg repo, then any remaining arguments
@@ -530,6 +909,23 @@ def init_logger():
         format='%(asctime)-15s %(levelname)s %(message)s')
     logger = logging.getLogger()
 
+def init_version():
+    global hg_version
+
+    try:
+        version, _, extra = util.version().partition('+')
+        version = list(int(e) for e in version.split('.'))
+        if extra:
+            version[1] += 1
+        hg_version = tuple(version)
+    except:
+        hg_version = None
+
+def check_version(*check):
+    if not hg_version:
+        return True
+    return hg_version >= check
+
 def main(argv):
     global subcommands
 
@@ -555,5 +951,6 @@ def main(argv):
         do_usage()
 
 init_logger()
+init_version()
 if __name__ == '__main__':
     sys.exit(main(sys.argv))
