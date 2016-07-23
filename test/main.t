@@ -14,6 +14,7 @@ test -n "$TEST_DIRECTORY" || TEST_DIRECTORY=$(dirname $0)/
 if test "$CAPABILITY_PUSH" = "t"
 then
 	git config --global remote-hg.capability-push true
+	git config --global remote-hg.push-updates-notes true
 else
 	git config --global remote-hg.capability-push false
 fi
@@ -931,7 +932,8 @@ test_expect_success 'notes' '
 	test_cmp expected actual
 '
 
-test_expect_failure 'push updates notes' '
+testpushupdatesnotesdesc='push updates notes'
+testpushupdatesnotes='
 	test_when_finished "rm -rf hgrepo gitrepo" &&
 
 	(
@@ -955,6 +957,13 @@ test_expect_failure 'push updates notes' '
 	git --git-dir=gitrepo/.git log --pretty="tformat:%N" --notes=hg > actual &&
 	test_cmp expected actual
 '
+
+if test "$CAPABILITY_PUSH" = "t"
+then
+test_expect_success "$testpushupdatesnotesdesc" "$testpushupdatesnotes"
+else
+test_expect_failure "$testpushupdatesnotesdesc" "$testpushupdatesnotes"
+fi
 
 test_expect_success 'push bookmark without changesets' '
 	test_when_finished "rm -rf hgrepo gitrepo" &&

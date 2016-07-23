@@ -218,6 +218,7 @@ class ParserContext:
         self.remoteref = None
         self.gitmarks = None
         self.hghelper = None
+        self.revs = []
 
 class Parser:
 
@@ -1040,6 +1041,7 @@ def parse_commit(parser):
 
     parsed_refs[ref] = node
     marks.new_mark(node, commit_mark)
+    parser.context.revs.append(node)
 
 def parse_reset(parser):
     remoteref = parser.context.remoteref
@@ -1425,7 +1427,7 @@ def delete_bookmark(parser, ref):
             subprocess.call(['git', 'update-ref', '-d', pbookmark])
     return ok
 
-def do_push_refspec(parser, refspec):
+def do_push_refspec(parser, refspec, revs):
     global force_push
 
     force = (refspec[0] == '+')
@@ -1495,23 +1497,56 @@ def do_push_refspec(parser, refspec):
                 die("check-hg-commits setup failed; is git-hg-helper also installed?")
             tmpfastexport.seek(0)
             try:
-                ok = do_push_hg(Parser(parser.repo, tmpfastexport, ctx))
+                nparser = Parser(parser.repo, tmpfastexport, ctx)
+                ok = do_push_hg(nparser)
             except UserWarning:
                 ok = False
         else:
             # simply feed fast-export directly to processing
             export = subprocess.Popen(cmd, stdin=None, stdout=subprocess.PIPE)
-            ok = do_push_hg(Parser(parser.repo, export.stdout, ctx))
+            nparser = Parser(parser.repo, export.stdout, ctx)
+            ok = do_push_hg(nparser)
     finally:
         if tmpmarks and os.path.exists(tmpmarks):
             if ok and not dry_run:
                 # the commits made it through, now we can commit
                 os.rename(tmpmarks, marks)
+                revs[:] = nparser.context.revs
             else:
                 os.remove(tmpmarks)
         if tmpfastexport and os.path.exists(tmpfastexport.name):
             tmpfastexport.close()
             os.remove(tmpfastexport.name)
+
+def update_notes(revs, desc):
+    if revs:
+        # spin up fast-import
+        gitmarks = os.path.join(dirname, 'marks-git')
+        # marks should exist by now
+        # no export of marks since notes commits are not relevant
+        proc = subprocess.Popen(['git', 'fast-import', '--done', '--quiet',
+            '--import-marks=%s' % gitmarks], stdin=subprocess.PIPE, stdout=sys.stderr)
+        # now feed fast-import
+        dest = proc.stdin
+
+        note_mark = marks.next_mark()
+        ref = "refs/notes/hg"
+        dest.write("commit %s\n" % ref)
+        dest.write("mark :%d\n" % (note_mark))
+        dest.write("committer remote-hg <> %d %s\n" % (ptime.time(), gittz(ptime.timezone)))
+        dest.write("data %d\n" % (len(desc)))
+        dest.write(desc + '\n')
+        current_note = rev_parse(ref)
+        if current_note:
+            dest.write('from %s^0\n' % (ref))
+        for rev in revs:
+            dest.write("N inline :%u\n" % marks.from_rev(rev))
+            dest.write("data %d\n" % (len(rev)))
+            dest.write(rev + '\n')
+        dest.write('\n')
+        dest.write('done\n')
+        dest.flush()
+        proc.wait()
 
 def do_push(parser):
     if os.environ.get('GIT_REMOTE_HG_DEBUG_PUSH'):
@@ -1519,12 +1554,19 @@ def do_push(parser):
         for line in parser:
             dump += line + '\n'
         die('DEBUG push:\n%s' % (dump))
+    revs = []
     for line in parser:
         if parser.check('push'):
-            do_push_refspec(parser, line.lstrip('push '))
+            localrevs = []
+            do_push_refspec(parser, line.lstrip('push '), localrevs)
+            revs.extend(localrevs)
         else:
             die('unhandled push command: %s' % (line))
     print
+    # at this stage, all external processes are done, marks files written
+    # so we can use those do update notes if so desired
+    if get_config_bool('remote-hg.push-updates-notes') and revs:
+        update_notes(revs, "Update notes on push")
 
 def do_option(parser):
     global dry_run, force_push
