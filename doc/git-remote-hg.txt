@@ -77,6 +77,20 @@ The default otherwise is simply `-M -C`.  See also e.g.
 https://www.kernel.org/pub/software/scm/git/docs/git-log.html[git-log(1) manpage]
 for more details on the options used to tweak this.
 
+As the old refs/hg/... are actually an implementation detail, they are now
+maintained not so visibly.  If that, however, would be preferred:
+
+--------------------------------------
+% git config --global remote-hg.show-private-refs true
+--------------------------------------
+
+By default, the refs/notes/hg are not updated upon push, though such can be
+enabled:
+
+--------------------------------------
+% git config --global remote-hg.push-updates-notes true
+--------------------------------------
+
 NOTES
 -----
 
