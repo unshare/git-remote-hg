@@ -470,7 +470,7 @@ def mark_to_rev(mark):
 def gitrange(repo, a, b):
     positive = []
     pending = set([int(b)])
-    negative = set([int(a)])
+    negative = int(a)
     for cur in xrange(b, -1, -1):
         if not pending:
             break
@@ -478,18 +478,12 @@ def gitrange(repo, a, b):
         parents = [p for p in repo.changelog.parentrevs(cur) if p >= 0]
 
         if cur in pending:
-            positive.append(cur)
+            if cur > negative:
+                positive.append(cur)
             pending.remove(cur)
             for p in parents:
-                if p not in negative:
+                if p > negative:
                     pending.add(p)
-        elif cur in negative:
-            negative.remove(cur)
-            for p in parents:
-                if p not in pending:
-                    negative.add(p)
-                else:
-                    pending.discard(p)
 
     positive.reverse()
     return positive
