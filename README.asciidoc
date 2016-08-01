@@ -9,7 +9,7 @@ git clone "hg::http://selenic.com/repo/hello"
 To enable this, simply add the 'git-remote-hg' script anywhere in your `$PATH`:
 
 --------------------------------------
-wget https://raw.github.com/felipec/git-remote-hg/master/git-remote-hg -O ~/bin/git-remote-hg
+wget https://raw.github.com/mnauw/git-remote-hg/master/git-remote-hg -O ~/bin/git-remote-hg
 chmod +x ~/bin/git-remote-hg
 --------------------------------------
 
@@ -127,5 +127,4 @@ https://github.com/felipec/git/wiki/Comparison-of-git-remote-hg-alternatives[her
 
 == Contributing ==
 
-Send your patches to the mailing list git-fc@googlegroups.com (no need to
-subscribe).
+Please file an issue with some patches or a pull-request.
