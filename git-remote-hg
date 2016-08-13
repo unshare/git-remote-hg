@@ -634,8 +634,11 @@ def export_ref(repo, name, kind, head):
         # continue incrementally on current notes branch (whenever possible)
         # to avoid wiping out present content upon fetch of new repo
         current_note = rev_parse(ref)
-        if current_note:
+        if current_note and not len(notes):
             print 'from %s^0' % (ref)
+        # but track along with the previous ref as import goes along
+        elif marks.last_note:
+            print "from :%u" % (marks.last_note)
 
         for rev in pending_revs:
             notes.add(rev)
