@@ -13,6 +13,7 @@ import subprocess
 import argparse
 import textwrap
 import logging
+import threading
 
 # thanks go to git-remote-helper for some helper functions
 
@@ -59,9 +60,7 @@ class GitHgRepo:
     def identity(self):
         return '[%s|%s]' % (os.getcwd(), self.topdir)
 
-    # run a git cmd in repo dir, captures stdout and stderr by default
-    # override in kwargs if otherwise desired
-    def run_cmd(self, args, check=False, **kwargs):
+    def start_cmd(self, args, **kwargs):
         cmd = ['git'] + args
         popen_options = { 'cwd': self.topdir,
             'stdout': subprocess.PIPE, 'stderr': subprocess.PIPE }
@@ -69,6 +68,12 @@ class GitHgRepo:
         log('%s running cmd %s with options %s', self.identity(),
             cmd, popen_options)
         process = subprocess.Popen(cmd, **popen_options)
+        return process
+
+    # run a git cmd in repo dir, captures stdout and stderr by default
+    # override in kwargs if otherwise desired
+    def run_cmd(self, args, check=False, **kwargs):
+        process = self.start_cmd(args, **kwargs)
         output = process.communicate()[0]
         if check and process.returncode != 0:
             die('command failed: %s', ' '.join(cmd))
@@ -362,7 +367,7 @@ class GitRevCommand(SubCommand):
                 print gitcommit
 
 
-class MarksCommand(SubCommand):
+class GcCommand(SubCommand):
 
     def argumentparser(self):
         usage = '%%(prog)s %s [options] <remote>...' % (self.subcommand)
@@ -370,30 +375,29 @@ class MarksCommand(SubCommand):
             formatter_class=argparse.RawDescriptionHelpFormatter)
         p.add_argument('-n', '--dry-run', action='store_true',
             help='do not actually update any metadata files')
-        p.add_argument('--keep', metavar='REVID',
-            help='only retain ancestors of REVID (including) in \
-                  hg tracking metadata, akin to hg\'s strip')
         p.epilog = textwrap.dedent("""\
-        Performs checks on <remote>'s marks files and ensures these are consistent
+        Performs cleanup on <remote>'s marks files and ensures these are consistent
         (never affecting or touching any git repository objects or history).
         The marks files are considered consistent if they "join"
-        on the :mark number (with no dangling hg or git commit id on either side).
+        on the :mark number (along with a valid git commit id).
 
-        While fetching from an hg remote usually results in a sane state, there
-        are some cases where that might not suffice (or not even succeed in the first
-        place). Also, fetching will only ever add tracked metadata marks, whereas
-        sometimes forgetting about some state might be required for consistent state
-        recovery (e.g. a strip performed on a remote Mercurial repo). Executing this
-        command should allow a subsequent fetch to succeed and restore a sane state
-        quickly.  In particular, making good use of --keep following a strip allows
-        a subsequent fetch to recover quickly without extensive history processing.
-
-        Furthermore, since git-fast-import (used during fetch) also dumps
-        non-commit SHA-1 in the marks file, the latter can become pretty large.
-        It will reduce in size by either performing a push (git-fast-export only
-        dumps commit objects to marks file) or by running this helper command.
+        This command can be useful in following scenarios:
+        * following a git gc command;
+          this could prune objects and lead to (then) invalid commit ids in marks
+          (in which case git-fast-export or git-fast-import would complain bitterly).
+          Such pruning is more likely to happen with remote hg repos with multiple heads.
+        * cleaning marks-git of a fetch-only remote;
+          git-fast-import (used during fetch) also dumps non-commit SHA-1 in the marks file,
+          so the latter can become pretty large. It will reduce in size either by a push
+          (git-fast-export only dumps commit objects) or by running this helper command.
         """)
         return p
+
+    def print_commits(self, gm, dest):
+        for c in gm.marks.keys():
+            dest.write(c + '\n')
+        dest.flush()
+        dest.close()
 
     def do(self, options, args):
         mydir = os.path.dirname(__file__)
@@ -407,31 +411,37 @@ class MarksCommand(SubCommand):
             if not remote in hg_repos:
                 self.usage('%s is not a valid hg remote' % (remote))
             hgpath = os.path.join(self.githgrepo.gitdir, 'hg', remote)
+            print "Loading hg marks ..."
             hgm = remotehg.Marks(os.path.join(hgpath, 'marks-hg'), None)
+            print "Loading git marks ..."
             gm = GitMarks(os.path.join(hgpath, 'marks-git'))
             repo = hg.repository(ui.ui(), hg_repos[remote])
-            ctx = ctxrev = None
-            if options.keep != None:
-                strip = options.keep
-                if strip in repo and repo[strip]:
-                    ctx = repo[strip]
-                    ctxrev = ctx.rev()
-                if not ctxrev >= 0:
-                    self.usage('revision %s not found in repository %s' % (strip, repo.root))
+            # git-gc may have dropped unreachable commits
+            # (in particular due to multiple hg head cases)
+            # need to drop those so git-fast-export or git-fast-import does not complain
+            print "Performing garbage collection on git commits ..."
+            process = self.githgrepo.start_cmd(['cat-file', '--batch-check'], \
+                stdin=subprocess.PIPE)
+            thread = threading.Thread(target=self.print_commits, args=(gm, process.stdin))
+            thread.start()
+            git_marks = set({})
+            for l in process.stdout:
+                sp = l.strip().split(' ', 2)
+                if sp[1] == 'commit':
+                    git_marks.add(gm.from_rev(sp[0]))
+            thread.join()
             # reduce down to marks that are common to both
-            common_marks = set(hgm.rev_marks.keys()).intersection(gm.rev_marks.keys())
+            print "Computing marks intersection ..."
+            common_marks = set(hgm.rev_marks.keys()).intersection(git_marks)
             hg_rev_marks = {}
             git_rev_marks = {}
             for m in common_marks:
-                rev = hgm.rev_marks[m]
-                # also check if still around in repo
-                if rev in repo and \
-                        not (ctxrev != None and repo[rev].rev() > ctxrev):
-                    hg_rev_marks[m] = hgm.rev_marks[m]
-                    git_rev_marks[m] = gm.rev_marks[m]
+                hg_rev_marks[m] = hgm.rev_marks[m]
+                git_rev_marks[m] = gm.rev_marks[m]
             # common marks will not not include any refs/notes/hg
             # let's not discard those casually, though they are not vital
-            revlist = subprocess.Popen(['git', 'rev-list', 'refs/notes/hg'], stdout=subprocess.PIPE)
+            print "Including notes commits ..."
+            revlist = self.githgrepo.start_cmd(['rev-list', 'refs/notes/hg'])
             for l in revlist.stdout.readlines():
                 c = l.strip()
                 m = gm.marks.get(c, 0)
@@ -445,38 +455,18 @@ class MarksCommand(SubCommand):
                 print "Trimmed hg marks from #%d down to #%d" % (len(hgm.rev_marks), len(hg_rev_marks))
             if len(gm.rev_marks) != len(git_rev_marks):
                 print "Trimmed git marks from #%d down to #%d" % (len(gm.rev_marks), len(git_rev_marks))
-            # make hg tips as consistent as possible
-            for b in hgm.tips:
-                tip = hgm.tips[b]
-                if tip not in repo or not repo[tip]:
-                    if not ctx:
-                        print "Could not determine safe value for tip of %s (rev %s)" % (b, tip)
-                        print "Please use --strip to provide fallback value."
-                        return
-                    else:
-                        # basically only the revision number is used by a fetch
-                        tip = ctx.hex()
-                else:
-                    hgrevs = set(hg_rev_marks.values())
-                    while True:
-                        if tip in hgrevs:
-                            break
-                        parent = repo[tip].parents()[0].hex()
-                        if parent == tip:
-                            break
-                        tip = parent
-                if hgm.tips[b] != tip:
-                    hgm.tips[b] = tip
-                    print "Updated tip of %s to %s" % (b, tip)
+            # marks-hg tips irrelevant nowadays
             # now update and store
             if not options.dry_run:
                 # hg marks
+                print "Writing hg marks ..."
                 hgm.rev_marks = hg_rev_marks
                 hgm.marks = {}
                 for mark, rev in hg_rev_marks.iteritems():
                     hgm.marks[rev] = mark
                 hgm.store()
                 # git marks
+                print "Writing git marks ..."
                 gm.rev_marks = git_rev_marks
                 gm.marks = {}
                 for mark, rev in git_rev_marks.iteritems():
@@ -847,7 +837,7 @@ def get_subcommands():
         'hg-rev': HgRevCommand,
         'git-rev': GitRevCommand,
         'repo': RepoCommand,
-        'marks':  MarksCommand,
+        'gc':  GcCommand,
         'sub': SubRepoCommand,
         'help' : HelpCommand
     }
@@ -868,7 +858,7 @@ def do_usage():
 
     hg-rev  \t show hg revision corresponding to a git revision
     git-rev \t find git revision corresponding to a hg revision
-    marks   \t perform maintenance on repo tracking marks
+    gc      \t perform maintenance and consistency cleanup on repo tracking marks
     sub     \t manage subrepos
     repo    \t show local hg repo backing a remote
 

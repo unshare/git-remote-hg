@@ -116,7 +116,7 @@ test_expect_success 'subcommands hg-rev and git-rev' '
 	)
 '
 
-test_expect_success 'subcommand mark' '
+test_expect_success 'subcommand gc' '
 	test_when_finished "rm -rf gitrepo* hgrepo*" &&
 
 	(
@@ -130,26 +130,27 @@ test_expect_success 'subcommand mark' '
 	echo two > content &&
 	hg commit -m two &&
 	echo three > content &&
-	hg commit -m three &&
-	hg identify -r 0 --id >../root
+	hg commit -m three
 	) &&
-
-	hgroot=`cat root` &&
 
 	git clone hg::hgrepo gitrepo &&
 
 	(
 	cd hgrepo &&
-	hg strip -r 1
+	hg strip -r 1 &&
+	echo four > content &&
+	hg commit -m four
 	) &&
 
 	(
 	cd gitrepo &&
-	git-hg-helper marks origin --keep $hgroot  > output &&
+	git fetch origin &&
+	git reset --hard origin/master &&
+	git gc &&
+	git-hg-helper gc origin > output &&
 	cat output &&
 	grep "hg marks" output &&
-	grep "git marks" output &&
-	grep "Updated" output | grep $hgroot
+	grep "git marks" output
 	)
 '
 
