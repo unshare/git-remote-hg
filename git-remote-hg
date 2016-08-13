@@ -1550,6 +1550,12 @@ def update_notes(revs, desc):
         dest.write('done\n')
         dest.flush()
         proc.wait()
+        # fail hard if this fails
+        # that prevents the marks file from being written
+        # so we can have a fresh look with a fetch
+        if proc.returncode:
+            die('notes update failed with return %d; recover with git fetch' %
+                (proc.returncode))
 
 def do_push(parser):
     if os.environ.get('GIT_REMOTE_HG_DEBUG_PUSH'):
