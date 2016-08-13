@@ -1573,9 +1573,9 @@ def do_push(parser):
             die('unhandled push command: %s' % (line))
     print
     # at this stage, all external processes are done, marks files written
-    # so we can use those do update notes if so desired
-    if get_config_bool('remote-hg.push-updates-notes') and revs:
-        update_notes(revs, "Update notes on push")
+    # so we can use those to update notes
+    # do so unconditionally because we can and should ....
+    update_notes(revs, "Update notes on push")
 
 def do_option(parser):
     global dry_run, force_push

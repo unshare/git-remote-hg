@@ -205,14 +205,6 @@ If somehow your workflow relies on having these in the old place:
 % git config --global remote-hg.show-private-refs true
 --------------------------------------
 
-The `refs/notes/hg` mentioned above that provide info on corresponding hg
-changeset are so far only updated upon a fetch.  If you prefer to have
-these notes as soon as possible, then a push can be made to do some extra
-work on this:
---------------------------------------
-% git config --global remote-hg.push-updates-notes true
---------------------------------------
-
 === Helper Commands ===
 
 Beyond that, a 'git-hg-helper' script has been added that can aid in the git-hg

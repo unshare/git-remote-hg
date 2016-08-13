@@ -84,13 +84,6 @@ maintained not so visibly.  If that, however, would be preferred:
 % git config --global remote-hg.show-private-refs true
 --------------------------------------
 
-By default, the refs/notes/hg are not updated upon push, though such can be
-enabled:
-
---------------------------------------
-% git config --global remote-hg.push-updates-notes true
---------------------------------------
-
 NOTES
 -----
 
