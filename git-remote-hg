@@ -530,7 +530,7 @@ def export_ref(repo, name, kind, head):
     total = len(revs)
     tip = tip.rev()
 
-    for rev in revs:
+    for progress, rev in enumerate(revs):
 
         c = repo[rev]
         node = c.node()
@@ -611,7 +611,6 @@ def export_ref(repo, name, kind, head):
             print "M %s :%u %s" % f
         print
 
-        progress = (rev - tip)
         if (progress % 100 == 0):
             print "progress revision %d '%s' (%d/%d)" % (rev, name, progress, total)
 
