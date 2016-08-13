@@ -495,24 +495,30 @@ def rev_to_mark(rev):
 def mark_to_rev(mark):
     return marks.to_rev(mark)
 
-# Get a range of revisions in the form of a..b (git committish)
-def gitrange(repo, a, b):
+# Walk backwards from revision b to determine which need importing
+# For repos with many heads (and loooots of tagging) this walk should
+# end as soon as possible, so use all the known revisions are negative.
+def revwalk(repo, name, b):
     positive = []
-    pending = set([int(b)])
-    negative = int(a)
+    pending = set()
+    if not marks.is_marked(b.hex()):
+        pending.add(int(b))
+    interval = int(b) / 10
+    interval = interval if interval > 1000 else 1000
     for cur in xrange(b, -1, -1):
         if not pending:
             break
 
-        parents = [p for p in repo.changelog.parentrevs(cur) if p >= 0]
-
         if cur in pending:
-            if cur > negative:
-                positive.append(cur)
+            positive.append(cur)
             pending.remove(cur)
+            parents = [p for p in repo.changelog.parentrevs(cur) if p >= 0]
             for p in parents:
-                if p > negative:
+                if not marks.is_marked(repo[p].hex()):
                     pending.add(p)
+
+        if cur % interval == 0:
+            print "progress revision walk '%s' (%d/%d)" % (name, (int(b) - cur), int(b))
 
     positive.reverse()
     return positive
@@ -525,7 +531,7 @@ def export_ref(repo, name, kind, head):
     except:
         tip = repo[-1]
 
-    revs = gitrange(repo, tip, head)
+    revs = revwalk(repo, ename, head)
 
     total = len(revs)
     tip = tip.rev()
@@ -534,9 +540,6 @@ def export_ref(repo, name, kind, head):
 
         c = repo[rev]
         node = c.node()
-
-        if marks.is_marked(c.hex()):
-            continue
 
         (manifest, user, (time, tz), files, desc, extra) = repo.changelog.read(node)
         rev_branch = extra['branch']
