@@ -27,6 +27,7 @@ to be appropriately merged upstream):
 * adds a 'git-hg-helper' script than can aid in the git-hg interaction workflow
 * provides enhanced bidirectional git-hg safety
 * avoids clutter of `refs/hg/...` by keeping these implementation details really private
+* more robust and efficient fetching
 
 See sections below or sidemarked notes for more details.
 ****
@@ -191,11 +192,12 @@ To tweak how 'git-remote-hg' decides on a copy/rename, use e.g:
 == Additional Features ==
 
 === Miscellaneous Tweaks ===
-
 Other than <<no-limitations, removing the limitations>> as mentioned above,
-a number of issues (either so reported in issue tracking or not) have been
-addressed here (e.g. notes handling, `fetch --prune` support, etc), some of
-which have been highlighted above.
+a number of issues (either so reported in
+https://github.com/felipec/git-remote-hg/issues[issue tracking] or not) have been
+addressed here, e.g. notes handling, `fetch --prune` support, recovering
+from a `strip` on remote repo, tracking remote changes to import (if any) in a
+safe, robust and efficient way, etc.  Some of these have been highlighted above.
 
 For example, the `refs/hg/...` refs are really an implementation detail
 that need not clutter up the (visible) ref space.  So, in as much as they
@@ -213,9 +215,7 @@ a remote helper.  This is similar to e.g. 'git-svn' being a separate program
 altogether.  These subcommands
 
 * provide conversion from a hg changeset id to a git commit hash, or vice versa
-* provide consistency maintenance on internal `git-remote-hg` metadata marks,
-which might on occasion be required or useful for efficiency
-(e.g. to avoid full fetch history processing following strip on a large Mercurial repo).
+* provide consistency and cleanup maintenance on internal `git-remote-hg` metadata marks
 * provide optimization of git marks of a fetch-only remote
 
 See the helper script commands' help description for further details.
@@ -226,11 +226,13 @@ as `git hg`:
 % git config --global alias.hg '!git-hg-helper'
 --------------------------------------
 
-With that in place, running `git hg marks <remote>` after initial fetch from (large)
+With that in place, running `git hg gc <remote>` after initial fetch from (large)
 <remote> will save quite some space in the git marks file.  Not to mention some time
-each time is loaded and saved again (upon fetch).  If the remote is ever pushed
+each time it is loaded and saved again (upon fetch).  If the remote is ever pushed
 to, the marks file will similarly be squashed, but for a fetch-only <remote>
-the aforementioned command will do.
+the aforementioned command will do.  It may also be needed to run aforementioned
+command after a `git gc` has been performed.  You will notice the need
+when `git-fast-import` or `git-fast-export` complain about not finding objects ;-)
 
 In addition, the helper also provides support routines for `git-remote-hg` that
 provide for increased (or at least safer) git-hg bidirectionality.
