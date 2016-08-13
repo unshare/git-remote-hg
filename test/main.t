@@ -89,9 +89,6 @@ check_push () {
 		'non-fast-forward')
 			grep "^ ! \[rejected\] *${branch} -> ${branch} (non-fast-forward)$" error || ref_ret=1
 			;;
-		'fetch-first')
-			grep "^ ! \[rejected\] *${branch} -> ${branch} (fetch first)$" error || ref_ret=1
-			;;
 		'forced-update')
 			grep "^ + [a-f0-9]*\.\.\.[a-f0-9]* *${branch} -> ${branch} (forced update)$" error || ref_ret=1
 			;;
@@ -450,7 +447,7 @@ test_expect_success 'remote update bookmark diverge' '
 	echo diverge > content &&
 	git commit -a -m diverge &&
 	check_push 1 <<-\EOF
-	diverge:fetch-first
+	diverge:non-fast-forward
 	EOF
 	) &&
 
@@ -691,7 +688,7 @@ test_expect_success 'remote big push' '
 	fi
 '
 
-test_expect_success 'remote big push fetch first' '
+test_expect_success 'remote big push non fast forward' '
 	test_when_finished "rm -rf hgrepo gitrepo*" &&
 
 	(
@@ -740,8 +737,8 @@ test_expect_success 'remote big push fetch first' '
 	check_push 1 --all <<-\EOF &&
 	master
 	good_bmark
-	bad_bmark:fetch-first
-	branches/bad_branch:festch-first
+	bad_bmark:non-fast-forward
+	branches/bad_branch:non-fast-forward
 	EOF
 
 	git fetch &&

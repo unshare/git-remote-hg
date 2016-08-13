@@ -153,7 +153,7 @@ class Marks:
 
         tmp = json.load(open(self.path))
 
-        self.tips = tmp['tips']
+        self.tips = []
         self.marks = tmp['marks']
         self.last_mark = tmp['last-mark']
         self.version = tmp.get('version', 1)
@@ -204,11 +204,6 @@ class Marks:
     def is_marked(self, rev):
         return rev in self.marks
 
-    def get_tip(self, branch):
-        return str(self.tips[branch])
-
-    def set_tip(self, branch, tip):
-        self.tips[branch] = tip
 
 class ParserContext:
 
@@ -525,16 +520,8 @@ def revwalk(repo, name, b):
 
 def export_ref(repo, name, kind, head):
     ename = '%s/%s' % (kind, name)
-    try:
-        tip = marks.get_tip(ename)
-        tip = repo[tip]
-    except:
-        tip = repo[-1]
-
     revs = revwalk(repo, ename, head)
-
     total = len(revs)
-    tip = tip.rev()
 
     for progress, rev in enumerate(revs):
 
@@ -652,8 +639,6 @@ def export_ref(repo, name, kind, head):
         print
 
         marks.last_note = note_mark
-
-    marks.set_tip(ename, head.hex())
 
 def export_tag(repo, tag):
     export_ref(repo, tag, 'tags', repo[hgref(tag)])
@@ -1255,15 +1240,6 @@ def push(repo, remote, p_revs, force):
 
     return ret
 
-def check_tip(ref, kind, name, heads):
-    try:
-        ename = '%s/%s' % (kind, name)
-        tip = marks.get_tip(ename)
-    except KeyError:
-        return True
-    else:
-        return tip in heads
-
 def do_export(parser):
     do_push_hg(parser)
     print
@@ -1308,8 +1284,6 @@ def do_push_hg(parser):
         else:
             die('unhandled export command: %s' % line)
 
-    need_fetch = False
-
     for ref, node in parsed_refs.iteritems():
         bnode = hgbin(node) if node else None
         if ref.startswith('refs/heads/branches'):
@@ -1318,15 +1292,6 @@ def do_push_hg(parser):
                 # up to date
                 print "ok %s up to date" % ref
                 continue
-
-            if peer:
-                remotemap = peer.branchmap()
-                if remotemap and branch in remotemap:
-                    heads = [hghex(e) for e in remotemap[branch]]
-                    if not check_tip(ref, 'branches', branch, heads):
-                        print "error %s fetch first" % ref
-                        need_fetch = True
-                        continue
 
             p_revs[bnode] = ref
             print "ok %s" % ref
@@ -1343,14 +1308,6 @@ def do_push_hg(parser):
             if bmark != fake_bmark and \
                     not (bmark == 'master' and bmark not in parser.repo._bookmarks):
                 p_bmarks.append((ref, bmark, old, new))
-
-            if peer:
-                remote_old = peer.listkeys('bookmarks').get(bmark)
-                if remote_old:
-                    if not check_tip(ref, 'bookmarks', bmark, remote_old):
-                        print "error %s fetch first" % ref
-                        need_fetch = True
-                        continue
 
             p_revs[bnode] = ref
         elif ref.startswith('refs/tags/'):
@@ -1374,9 +1331,6 @@ def do_push_hg(parser):
         else:
             # transport-helper/fast-export bugs
             continue
-
-    if need_fetch:
-        return
 
     if dry_run:
         if peer and not force_push:
