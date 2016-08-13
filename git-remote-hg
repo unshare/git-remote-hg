@@ -1677,6 +1677,10 @@ def main(args):
     dry_run = False
     notes = set()
 
+    if not capability_push:
+        warn('capability_push is disabled, only do so when really sure')
+        warn('various enhanced features might fail in subtle ways')
+
     prefix = select_private_refs(alias)
     repo = get_repo(url, alias)
 
