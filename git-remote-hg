@@ -1445,6 +1445,7 @@ def do_push_refspec(parser, refspec, revs):
             subprocess.check_call(cmd, stdin=None, stdout=tmpfastexport)
             try:
                 import imp
+                sys.dont_write_bytecode = True
                 ctx.hghelper = imp.load_source('hghelper', \
                     os.path.join(os.path.dirname(__file__), 'git-hg-helper'))
                 ctx.hghelper.init_git(gitdir)

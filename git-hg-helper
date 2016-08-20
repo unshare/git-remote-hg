@@ -36,6 +36,7 @@ def log(msg, *args):
 def import_sibling(mod, filename):
     import imp
     mydir = os.path.dirname(__file__)
+    sys.dont_write_bytecode = True
     return imp.load_source(mod, os.path.join(mydir, filename))
 
 class GitHgRepo:
