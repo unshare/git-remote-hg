@@ -923,14 +923,14 @@ def check_version(*check):
 def main(argv):
     global subcommands
 
-    # init repo dir
-    # we will take over dir management ...
-    init_git(os.environ.pop('GIT_DIR', None))
-
     # as an alias, cwd is top dir, change again to original directory
     reldir = os.environ.get('GIT_PREFIX')
     if reldir:
         os.chdir(reldir)
+
+    # init repo dir
+    # we will take over dir management ...
+    init_git(os.environ.pop('GIT_DIR', None))
 
     subcommands = get_subcommands()
 
