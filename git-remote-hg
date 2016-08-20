@@ -666,7 +666,7 @@ def do_capabilities(parser):
     print "refspec refs/heads/*:%s/bookmarks/*" % prefix
     print "refspec refs/tags/*:%s/tags/*" % prefix
 
-    path = os.path.join(dirname, 'marks-git')
+    path = os.path.join(marksdir, 'marks-git')
 
     if os.path.exists(path):
         print "*import-marks %s" % path
@@ -755,7 +755,7 @@ def do_list(parser):
 def do_import(parser):
     repo = parser.repo
 
-    path = os.path.join(dirname, 'marks-git')
+    path = os.path.join(marksdir, 'marks-git')
 
     print "feature done"
     if os.path.exists(path):
@@ -1419,7 +1419,7 @@ def do_push_refspec(parser, refspec, revs):
     if not fast_export_options:
         fast_export_options = '-M -C'
     cmd.extend(fast_export_options.strip().split())
-    marks = os.path.join(dirname, 'marks-git')
+    marks = os.path.join(marksdir, 'marks-git')
     if os.path.exists(marks):
         cmd.append('--import-marks=%s' % marks)
     # optionally reuse existing hg commits in local repos
@@ -1430,7 +1430,7 @@ def do_push_refspec(parser, refspec, revs):
     # otherwise some commits may no longer be exported next time/try around
     tmpmarks = ''
     if use_hg_commits or not dry_run:
-        tmpmarks = os.path.join(dirname, 'marks-git-%d' % (os.getpid()))
+        tmpmarks = os.path.join(marksdir, 'marks-git-%d' % (os.getpid()))
         cmd.append('--export-marks=%s' % tmpmarks)
     cmd.append(refs[0])
     # a parameter would obviously be nicer here ...
@@ -1442,7 +1442,7 @@ def do_push_refspec(parser, refspec, revs):
             # we need the mapping from marks to commit
             # so store the output first to a file (and marks get saved also),
             # and then process that file
-            tmpfastexport = open(os.path.join(dirname, 'git-fast-export-%d' % (os.getpid())), 'w+b')
+            tmpfastexport = open(os.path.join(marksdir, 'git-fast-export-%d' % (os.getpid())), 'w+b')
             subprocess.check_call(cmd, stdin=None, stdout=tmpfastexport)
             try:
                 import imp
@@ -1482,7 +1482,7 @@ def do_push_refspec(parser, refspec, revs):
 def update_notes(revs, desc):
     if revs:
         # spin up fast-import
-        gitmarks = os.path.join(dirname, 'marks-git')
+        gitmarks = os.path.join(marksdir, 'marks-git')
         # marks should exist by now
         # no export of marks since notes commits are not relevant
         proc = subprocess.Popen(['git', 'fast-import', '--done', '--quiet',
@@ -1585,6 +1585,7 @@ def main(args):
     global dry_run
     global notes, alias
     global capability_push
+    global marksdir
 
     marks = None
     is_tmp = False
@@ -1645,7 +1646,8 @@ def main(args):
     if not is_tmp:
         fix_path(alias, peer or repo, url)
 
-    marks_path = os.path.join(dirname, 'marks-hg')
+    marksdir = dirname
+    marks_path = os.path.join(marksdir, 'marks-hg')
     marks = Marks(marks_path, repo)
 
     if sys.platform == 'win32':
