@@ -147,7 +147,7 @@ test_expect_success 'subcommand gc' '
 	git fetch origin &&
 	git reset --hard origin/master &&
 	git gc &&
-	git-hg-helper gc origin > output &&
+	git-hg-helper gc --check-hg origin > output &&
 	cat output &&
 	grep "hg marks" output &&
 	grep "git marks" output

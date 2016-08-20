@@ -373,6 +373,8 @@ class GcCommand(SubCommand):
         usage = '%%(prog)s %s [options] <remote>...' % (self.subcommand)
         p = argparse.ArgumentParser(usage=usage, \
             formatter_class=argparse.RawDescriptionHelpFormatter)
+        p.add_argument('--check-hg', action='store_true',
+            help='also prune invalid hg revisions')
         p.add_argument('-n', '--dry-run', action='store_true',
             help='do not actually update any metadata files')
         p.epilog = textwrap.dedent("""\
@@ -415,7 +417,7 @@ class GcCommand(SubCommand):
             hgm = remotehg.Marks(os.path.join(hgpath, 'marks-hg'), None)
             print "Loading git marks ..."
             gm = GitMarks(os.path.join(hgpath, 'marks-git'))
-            repo = hg.repository(ui.ui(), hg_repos[remote])
+            repo = hg.repository(ui.ui(), hg_repos[remote]) if options.check_hg else None
             # git-gc may have dropped unreachable commits
             # (in particular due to multiple hg head cases)
             # need to drop those so git-fast-export or git-fast-import does not complain
@@ -436,6 +438,8 @@ class GcCommand(SubCommand):
             hg_rev_marks = {}
             git_rev_marks = {}
             for m in common_marks:
+                if repo and not hgm.rev_marks[m] in repo:
+                        continue
                 hg_rev_marks[m] = hgm.rev_marks[m]
                 git_rev_marks[m] = gm.rev_marks[m]
             # common marks will not not include any refs/notes/hg
