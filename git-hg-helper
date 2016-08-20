@@ -161,7 +161,8 @@ class GitHgRepo:
                         continue
                 else:
                     # make sure the shared path is always up-to-date
-                    util.writefile(os.path.join(local_hg, 'sharedpath'), hg_path)
+                    util.writefile(os.path.join(local_hg, 'sharedpath'),
+                        os.path.abspath(hg_path))
                 self.hg_repos[r] = os.path.join(local_path)
 
         log('%s determined hg_repos %s', self.identity(), self.hg_repos)
