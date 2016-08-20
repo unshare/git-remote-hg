@@ -33,6 +33,11 @@ def debug(msg, *args):
 def log(msg, *args):
     logger.log(logging.LOG, msg, *args)
 
+def import_sibling(mod, filename):
+    import imp
+    mydir = os.path.dirname(__file__)
+    return imp.load_source(mod, os.path.join(mydir, filename))
+
 class GitHgRepo:
 
     def __init__(self, topdir=None, gitdir=None):
@@ -119,9 +124,7 @@ class GitHgRepo:
         return self.run_cmd(['cat-file', '-p', ref])
 
     def get_git_commit(self, rev):
-        mydir = os.path.dirname(__file__)
-        import imp
-        remotehg = imp.load_source('remotehg', os.path.join(mydir, 'git-remote-hg'))
+        remotehg = import_sibling('remotehg', 'git-remote-hg')
         for r in self.get_hg_repos():
             try:
                 hgpath = os.path.join(self.gitdir, 'hg', r)
@@ -402,9 +405,7 @@ class GcCommand(SubCommand):
         dest.close()
 
     def do(self, options, args):
-        mydir = os.path.dirname(__file__)
-        import imp
-        remotehg = imp.load_source('remotehg', os.path.join(mydir, 'git-remote-hg'))
+        remotehg = import_sibling('remotehg', 'git-remote-hg')
 
         hg_repos = self.githgrepo.get_hg_repos()
         if not args:
