@@ -27,7 +27,9 @@ to be appropriately merged upstream):
 * adds a 'git-hg-helper' script than can aid in the git-hg interaction workflow
 * provides enhanced bidirectional git-hg safety
 * avoids clutter of `refs/hg/...` by keeping these implementation details really private
-* more robust and efficient fetching
+* more robust and efficient fetching, especially so when fetching or cloning from multiple
+  Mercurial clones which will only process changesets not yet fetched from elsewhere
+  (as opposed to processing everything all over again)
 
 See sections below or sidemarked notes for more details.
 ****
@@ -206,6 +208,24 @@ If somehow your workflow relies on having these in the old place:
 --------------------------------------
 % git config --global remote-hg.show-private-refs true
 --------------------------------------
+
+More importantly, a significantly more efficient workflow is achieved using
+one set of shared marks files for all remotes (which also forces a local repo
+to use an internal proxy clone).
+The practical consequence is that fetching from a newly added remote hg repo
+does not require another (lengthy) complete import
+(as the original clone) but will only fetch additional changesets (if any).
+The same goes for subsequent fetching from any hg remote; what was fetched
+and imported from some remote need not be imported again from another.
+Operating in this shared mode also has the added advantage
+of correctly pushing after a `strip` on a remote.
+This shared-marks-files behaviour is the default on a fresh repo clone.  It can
+also be enabled on an existing one by the following setting.
+--------------------------------------
+% git config --global remote-hg.shared-marks true
+--------------------------------------
+Note, however, that one should then perform a fetch from each relevant remote
+to fully complete the conversion (prior to subsequent pushing).
 
 === Helper Commands ===
 

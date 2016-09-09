@@ -84,6 +84,16 @@ maintained not so visibly.  If that, however, would be preferred:
 % git config --global remote-hg.show-private-refs true
 --------------------------------------
 
+Use of shared marks files is the default in a new repo, but can also be enabled
+for an existing repo:
+
+--------------------------------------
+% git config --global remote-hg.shared-marks true
+--------------------------------------
+
+Note that one should perform a fetch from each remote to properly complete the
+conversion to shared marks files.
+
 NOTES
 -----
 
@@ -169,6 +179,14 @@ and `git-fast-import` and contains a mapping from mark to commit hash, where a
 mark is essentially a plain number.  `marks-hg` similarly contains a (JSON) based
 mapping between such mark and hg revision hash.  Together they provide for a
 (consistent) view of the synchronization state of things.
+
+When operating with shared-marks files, the `marks-git` and `marks-hg` files
+are shared among all repos.  As such, they are then found in the `.git/hg`
+directory (rather than a repo subdirectory).
+As there is really only one hg repository
+(the shared storage "union bag" in `.git/hg/.hg`), only 1 set of marks files
+should track the mapping between commit hash and revision hash.
+Each individual remote then only adds some metadata (e.g regarding heads).
 
 Upon a fetch, the helper uses the `marks-hg` file to decide what is already present
 and what not.  The required parts are then retrieved from Mercurial and turned

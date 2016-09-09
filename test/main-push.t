@@ -95,6 +95,9 @@ setup_check_hg_commits_repo () {
         )
 }
 
+# a shared bag would make all of the following pretty trivial
+git config --global remote-hg.shared-marks false
+
 git config --global remote-hg.check-hg-commits fail
 test_expect_success 'check-hg-commits with fail mode' '
 	test_when_finished "rm -rf gitrepo* hgrepo*" &&
@@ -145,5 +148,110 @@ export GIT_REMOTE_HG_TEST_REMOTE
 test_expect_success 'check-hg-commits with push mode - with local proxy' '
 	check_hg_commits_push
 '
+
+setup_check_shared_marks_repo () {
+        (
+	rm -rf hgrepo* &&
+	hg init hgrepo &&
+	cd hgrepo &&
+	echo zero > content &&
+	hg add content &&
+	hg commit -m zero
+	) &&
+
+	git clone "hg::hgrepo" gitrepo &&
+
+	(
+	cd gitrepo &&
+	git remote add second hg::../hgrepo &&
+	git fetch second
+	)
+}
+
+check_marks () {
+	dir=$1
+
+	ls -al $dir &&
+	if test "$2" = "y"
+	then
+		test -f $dir/marks-git && test -f $dir/marks-hg
+	else
+		test ! -f $dir/marks-git && test ! -f $dir/marks-hg
+	fi
+}
+
+# cleanup setting
+git config --global --unset remote-hg.shared-marks
+
+test_expect_success 'shared-marks unset' '
+	test_when_finished "rm -rf gitrepo* hgrepo*" &&
+
+	setup_check_shared_marks_repo &&
+
+	(
+	cd gitrepo &&
+	check_marks .git/hg y &&
+	check_marks .git/hg/origin n &&
+	check_marks .git/hg/second n
+	)
+'
+
+test_expect_success 'shared-marks set to unset' '
+	test_when_finished "rm -rf gitrepo* hgrepo*" &&
+
+	git config --global remote-hg.shared-marks true &&
+	setup_check_shared_marks_repo &&
+
+	(
+	cd gitrepo &&
+	check_marks .git/hg y &&
+	check_marks .git/hg/origin n &&
+	check_marks .git/hg/second n
+	) &&
+
+	git config --global remote-hg.shared-marks false &&
+	(
+		cd gitrepo &&
+		git fetch origin &&
+		check_marks .git/hg n &&
+		check_marks .git/hg/origin y &&
+		check_marks .git/hg/second y
+	)
+'
+
+test_expect_success 'shared-marks unset to set' '
+	test_when_finished "rm -rf gitrepo* hgrepo*" &&
+
+	git config --global remote-hg.shared-marks false &&
+	setup_check_shared_marks_repo &&
+
+	(
+	cd gitrepo &&
+	check_marks .git/hg n &&
+	check_marks .git/hg/origin y &&
+	check_marks .git/hg/second y
+	) &&
+
+	git config --global --unset remote-hg.shared-marks &&
+	(
+		cd gitrepo &&
+		git fetch origin &&
+		check_marks .git/hg n &&
+		check_marks .git/hg/origin y &&
+		check_marks .git/hg/second y
+	) &&
+
+	git config --global remote-hg.shared-marks true &&
+	(
+		cd gitrepo &&
+		git fetch origin &&
+		check_marks .git/hg y &&
+		check_marks .git/hg/origin n &&
+		check_marks .git/hg/second n
+	)
+'
+
+# cleanup setting
+git config --global --unset remote-hg.shared-marks
 
 test_done

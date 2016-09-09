@@ -64,6 +64,7 @@ test_expect_success 'subcommand help' '
 	grep origin help
 '
 
+git config --global remote-hg.shared-marks false
 test_expect_success 'subcommand repo - no local proxy' '
 	test_when_finished "rm -rf gitrepo* hgrepo*" &&
 
@@ -81,6 +82,8 @@ test_expect_success 'subcommand repo - no local proxy' '
 
 	test_cmp expected actual
 '
+
+git config --global --unset remote-hg.shared-marks
 
 GIT_REMOTE_HG_TEST_REMOTE=1 &&
 export GIT_REMOTE_HG_TEST_REMOTE

@@ -1574,6 +1574,86 @@ def select_private_refs(alias):
         # keep private implementation refs really private
         return 'hg/%s/refs' % alias
 
+def select_marks_dir(alias, gitdir, migrate):
+    dirname = os.path.join(gitdir, 'hg', alias)
+    private_gm = os.path.join(dirname, 'marks-git')
+    shared_dir = os.path.join(gitdir, 'hg')
+    shared_gm = os.path.join(shared_dir, 'marks-git')
+    shared_hgm = os.path.join(shared_dir, 'marks-hg')
+    # not good in either case
+    if os.path.exists(private_gm) and os.path.exists(shared_gm):
+        die('found both %s and %s' % (private_gm, shared_gm))
+    # retrieve setting
+    shared_marks = get_config('remote-hg.shared-marks').strip()
+    # standardize to True, False or None
+    shared_marks = get_config_bool('remote-hg.shared-marks', False) \
+        if shared_marks else None
+    # if no specific setting, select one here (favouring shared for new installation)
+    if shared_marks == None:
+        # select one automagically, favouring shared for new installation
+        if os.path.exists(private_gm):
+            shared_marks = False
+        elif not os.path.exists(shared_gm) and os.path.exists(shared_dir):
+            # not a fresh clone, but no shared setup, so use private
+            shared_marks = False
+        else:
+            shared_marks = True
+        # only migrate with explicit setting
+        migrate = False
+    # otherwise, there is not much to decide
+    # but a migration from one setup to the other might be needed
+    l = os.listdir(shared_dir) if os.path.exists(shared_dir) and migrate else []
+    if shared_marks and migrate:
+        # make sure all local ones are cleaned up
+        # use one of these (preferably origin) to seed the shared
+        seen_file = False
+        while l:
+            d = l.pop()
+            gitm = os.path.join(shared_dir, d, 'marks-git')
+            hgm = os.path.join(shared_dir, d, 'marks-hg')
+            # move marks to shared if no such yet (if origin or last one in line)
+            if os.path.exists(gitm) and os.path.exists(hgm) and \
+              not os.path.exists(shared_gm) and not os.path.exists(shared_gm) and \
+              (d == 'origin' or not l):
+                warn('using marks of remote %s as shared marks' % (d))
+                seen_file = True
+                os.rename(gitm, shared_gm)
+                os.rename(hgm, shared_hgm)
+            for p in (gitm, hgm):
+                if os.path.exists(p):
+                   seen_file = True
+                   os.remove(p)
+        # all private marks removed, should have shared
+        if seen_file and (not os.path.exists(shared_gm) or not os.path.exists(shared_gm)):
+            die('migration to shared marks failed; perform fetch to recover')
+    elif migrate:
+        if not os.path.exists(shared_gm) or not os.path.exists(shared_hgm):
+            l = []
+        for d in l:
+            if not os.path.isdir(os.path.join(shared_dir, d)) or d == '.hg':
+                continue
+            gitm = os.path.join(shared_dir, d, 'marks-git')
+            hgm = os.path.join(shared_dir, d, 'marks-hg')
+            for p in ((shared_gm, gitm), (shared_hgm, hgm)):
+                if os.path.exists(p[0]):
+                   shutil.copyfile(p[0], p[1])
+                # try to run helper gc
+                # only really important for a local repo (without proxy)
+            warn('seeded marks of %s with shared; performing gc' % d)
+            try:
+                subprocess.check_call(['git-hg-helper', 'gc', '--check-hg', d],
+                    stdout=sys.stderr)
+            except:
+                warn('gc for %s failed' % d)
+            for p in (shared_gm, shared_hgm):
+                if os.path.exists(p):
+                   os.remove(p)
+    if shared_marks:
+        # force proxy for local repo
+        os.environ['GIT_REMOTE_HG_TEST_REMOTE'] = 'y'
+        return shared_dir
+    return dirname
+
 def main(args):
     global prefix, gitdir, dirname, branches, bmarks
     global marks, blob_marks, parsed_refs
@@ -1641,12 +1721,12 @@ def main(args):
         warn('various enhanced features might fail in subtle ways')
 
     prefix = select_private_refs(alias)
+    marksdir = select_marks_dir(alias, gitdir, True)
     repo = get_repo(url, alias)
 
     if not is_tmp:
         fix_path(alias, peer or repo, url)
 
-    marksdir = dirname
     marks_path = os.path.join(marksdir, 'marks-hg')
     marks = Marks(marks_path, repo)
 
