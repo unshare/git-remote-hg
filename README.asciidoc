@@ -195,8 +195,8 @@ To tweak how 'git-remote-hg' decides on a copy/rename, use e.g:
 Other than <<no-limitations, removing the limitations>> as mentioned above,
 a number of issues (either so reported in
 https://github.com/felipec/git-remote-hg/issues[issue tracking] or not) have been
-addressed here, e.g. notes handling, `fetch --prune` support, recovering
-from a `strip` on remote repo, tracking remote changes to import (if any) in a
+addressed here, e.g. notes handling, `fetch --prune` support, correctly fetching
+after a `strip` on remote repo, tracking remote changes to import (if any) in a
 safe, robust and efficient way, etc.  Some of these have been highlighted above.
 
 For example, the `refs/hg/...` refs are really an implementation detail
