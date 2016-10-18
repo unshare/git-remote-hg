@@ -1383,7 +1383,7 @@ def delete_bookmark(parser, ref):
             ok = peer.pushkey('bookmarks', bmark, old, '')
         # delete private ref
         if ok:
-            pbookmark = '%s/bookmarks/%s' % (prefix, bmark)
+            pbookmark = '%s/heads/%s' % (prefix, bmark)
             subprocess.call(['git', 'update-ref', '-d', pbookmark])
     return ok
 
