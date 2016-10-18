@@ -158,7 +158,7 @@ class Marks:
         self.marks = tmp['marks']
         self.last_mark = tmp['last-mark']
         self.version = tmp.get('version', 1)
-        self.last_note = tmp.get('last-note', 0)
+        self.last_note = 0
 
         for rev, mark in self.marks.iteritems():
             self.rev_marks[mark] = rev
@@ -612,34 +612,9 @@ def export_ref(repo, name, kind, head):
 
     pending_revs = set(revs) - notes
     if pending_revs:
-        note_mark = marks.next_mark()
-        ref = "refs/notes/hg"
-
-        print "commit %s" % ref
-        print "mark :%d" % (note_mark)
-        print "committer remote-hg <> %d %s" % (ptime.time(), gittz(ptime.timezone))
         desc = "Notes for %s\n" % (name)
-        print "data %d" % (len(desc))
-        print desc
-        # continue incrementally on current notes branch (whenever possible)
-        # to avoid wiping out present content upon fetch of new repo
-        current_note = rev_parse(ref)
-        if current_note and not len(notes):
-            print 'from %s^0' % (ref)
-        # but track along with the previous ref as import goes along
-        elif marks.last_note:
-            print "from :%u" % (marks.last_note)
-
-        for rev in pending_revs:
-            notes.add(rev)
-            c = repo[rev]
-            print "N inline :%u" % rev_to_mark(c)
-            msg = c.hex()
-            print "data %d" % (len(msg))
-            print msg
-        print
-
-        marks.last_note = note_mark
+        update_notes([repo[rev].hex() for rev in pending_revs], desc, False)
+        notes.update(pending_revs)
 
 def export_tag(repo, tag):
     export_ref(repo, tag, 'tags', repo[hgref(tag)])
@@ -1479,8 +1454,11 @@ def do_push_refspec(parser, refspec, revs):
             tmpfastexport.close()
             os.remove(tmpfastexport.name)
 
-def update_notes(revs, desc):
-    if revs:
+def update_notes(revs, desc, run_import):
+    if not revs:
+        return
+
+    if run_import:
         # spin up fast-import
         gitmarks = os.path.join(marksdir, 'marks-git')
         # marks should exist by now
@@ -1489,22 +1467,33 @@ def update_notes(revs, desc):
             '--import-marks=%s' % gitmarks], stdin=subprocess.PIPE, stdout=sys.stderr)
         # now feed fast-import
         dest = proc.stdin
+    else:
+        proc = None
+        dest = sys.stdout
 
-        note_mark = marks.next_mark()
-        ref = "refs/notes/hg"
-        dest.write("commit %s\n" % ref)
-        dest.write("mark :%d\n" % (note_mark))
-        dest.write("committer remote-hg <> %d %s\n" % (ptime.time(), gittz(ptime.timezone)))
-        dest.write("data %d\n" % (len(desc)))
-        dest.write(desc + '\n')
-        current_note = rev_parse(ref)
-        if current_note:
-            dest.write('from %s^0\n' % (ref))
-        for rev in revs:
-            dest.write("N inline :%u\n" % marks.from_rev(rev))
-            dest.write("data %d\n" % (len(rev)))
-            dest.write(rev + '\n')
-        dest.write('\n')
+    note_mark = marks.next_mark()
+    ref = "refs/notes/hg"
+    dest.write("commit %s\n" % ref)
+    dest.write("mark :%d\n" % (note_mark))
+    dest.write("committer remote-hg <> %d %s\n" % (ptime.time(), gittz(ptime.timezone)))
+    dest.write("data %d\n" % (len(desc)))
+    dest.write(desc + '\n')
+    # continue incrementally on current notes branch (whenever possible)
+    # to avoid wiping out present content upon fetch of new repo
+    # but track along with the previous ref (e.g. as import goes along)
+    current_note = rev_parse(ref)
+    if current_note and not marks.last_note:
+        dest.write('from %s^0\n' % (ref))
+    elif marks.last_note:
+        dest.write('from :%u\n' % (marks.last_note))
+    for rev in revs:
+        dest.write("N inline :%u\n" % marks.from_rev(rev))
+        dest.write("data %d\n" % (len(rev)))
+        dest.write(rev + '\n')
+    dest.write('\n')
+    marks.last_note = note_mark
+
+    if proc:
         dest.write('done\n')
         dest.flush()
         proc.wait()
@@ -1533,7 +1522,7 @@ def do_push(parser):
     # at this stage, all external processes are done, marks files written
     # so we can use those to update notes
     # do so unconditionally because we can and should ....
-    update_notes(revs, "Update notes on push")
+    update_notes(revs, "Update notes on push", True)
 
 def do_option(parser):
     global dry_run, force_push
