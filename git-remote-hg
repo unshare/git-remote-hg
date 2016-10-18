@@ -1425,7 +1425,7 @@ def do_push_refspec(parser, refspec, revs):
     # optionally reuse existing hg commits in local repos
     check_hg_commits = get_config('remote-hg.check-hg-commits').strip()
     use_hg_commits = check_hg_commits in ('fail', 'push')
-    # no commit of marks if dry-dry_run
+    # no commit of marks if dry_run
     # and only commit if all went ok,
     # otherwise some commits may no longer be exported next time/try around
     tmpmarks = ''
