@@ -1395,7 +1395,7 @@ def do_push_refspec(parser, refspec, revs):
     # check for delete
     if (not refs[0]) and refs[1].startswith('refs/heads') and \
             not refs[1].startswith('refs/heads/branches'):
-        if not delete_bookmark(parser, refs[1]):
+        if not dry_run and not delete_bookmark(parser, refs[1]):
             print "error %s could not delete"% (refs[1])
         else:
             print "ok %s" % (refs[1])
