@@ -1602,7 +1602,7 @@ def select_marks_dir(alias, gitdir, migrate):
             hgm = os.path.join(shared_dir, d, 'marks-hg')
             # move marks to shared if no such yet (if origin or last one in line)
             if os.path.exists(gitm) and os.path.exists(hgm) and \
-              not os.path.exists(shared_gm) and not os.path.exists(shared_gm) and \
+              not os.path.exists(shared_gm) and not os.path.exists(shared_hgm) and \
               (d == 'origin' or not l):
                 warn('using marks of remote %s as shared marks' % (d))
                 seen_file = True
@@ -1613,7 +1613,7 @@ def select_marks_dir(alias, gitdir, migrate):
                    seen_file = True
                    os.remove(p)
         # all private marks removed, should have shared
-        if seen_file and (not os.path.exists(shared_gm) or not os.path.exists(shared_gm)):
+        if seen_file and (not os.path.exists(shared_gm) or not os.path.exists(shared_hgm)):
             die('migration to shared marks failed; perform fetch to recover')
     elif migrate:
         if not os.path.exists(shared_gm) or not os.path.exists(shared_hgm):
