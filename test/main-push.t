@@ -251,6 +251,32 @@ test_expect_success 'shared-marks unset to set' '
 	)
 '
 
+test_expect_success 'push with renamed executable preserves executable bit' '
+	test_when_finished "rm -rf hgrepo gitrepo*" &&
+
+	hg init hgrepo &&
+
+	(
+	git init gitrepo &&
+	cd gitrepo &&
+	git remote add origin "hg::../hgrepo" &&
+	echo one > content &&
+	chmod a+x content &&
+	git add content &&
+	git commit -a -m one &&
+	git mv content content2 &&
+	git commit -a -m two &&
+	git push origin master
+	) &&
+
+	(
+	cd hgrepo &&
+	hg update &&
+	stat content2 >expected &&
+	grep -- -rwxr-xr-x expected
+	)
+'
+
 # cleanup setting
 git config --global --unset remote-hg.shared-marks
 

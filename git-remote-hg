@@ -778,17 +778,7 @@ def get_file_metadata(repo, p1, files):
         if 'rename' in f and 'mode' not in f:
             old = f['rename']
             ctx = repo[p1][old]
-            m = ''
-            # .isexec(), .islink() only around in newer versions
-            if hasattr(ctx, 'isexec'):
-                m = ctx.isexec()
-            else:
-                m = ('x' in ctx.flags())
-            if hasattr(ctx, 'islink'):
-                m = ctx.islink()
-            else:
-                m = ('l' in ctx.flags())
-            f['mode'] = m
+            f['mode'] = ctx.flags()
             f['data'] = ctx.data()
 
 def get_merge_files(repo, p1, p2, files):
