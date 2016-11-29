@@ -278,6 +278,36 @@ test_expect_success 'push with renamed executable preserves executable bit' '
 	)
 '
 
+test_expect_success 'push with submodule' '
+	test_when_finished "rm -rf sub hgrepo gitrepo*" &&
+
+	hg init hgrepo &&
+
+	(
+	git init sub &&
+	cd sub &&
+	: >empty &&
+	git add empty &&
+	git commit -m init
+	) &&
+
+	(
+	git init gitrepo &&
+	cd gitrepo &&
+	git submodule add ../sub sub &&
+	git remote add origin "hg::../hgrepo" &&
+	git commit -a -m sub &&
+	git push origin master
+	) &&
+
+	(
+	cd hgrepo &&
+	hg update &&
+	expected="[git-remote-hg: skipped import of submodule at $(git -C ../sub rev-parse HEAD)]"
+	test "$expected" = "$(cat sub)"
+	)
+'
+
 # cleanup setting
 git config --global --unset remote-hg.shared-marks
 
