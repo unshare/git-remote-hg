@@ -334,7 +334,9 @@ def get_filechanges(repo, ctx, parent):
 
 def fixup_user_git(user):
     name = mail = None
-    user = user.replace('"', '')
+    global remove_username_quotes
+    if remove_username_quotes:
+        user = user.replace('"', '')
     m = AUTHOR_RE.match(user)
     if m:
         name = m.group(1)
@@ -1646,6 +1648,7 @@ def main(args):
     global dry_run
     global notes, alias
     global capability_push
+    global remove_username_quotes
     global marksdir
 
     marks = None
@@ -1665,6 +1668,7 @@ def main(args):
     hg_git_compat = get_config_bool('remote-hg.hg-git-compat')
     track_branches = get_config_bool('remote-hg.track-branches', True)
     capability_push = get_config_bool('remote-hg.capability-push', True)
+    remove_username_quotes = get_config_bool('remote-hg.remove-username-quotes', True)
     force_push = False
 
     if hg_git_compat:

@@ -226,6 +226,20 @@ also be enabled on an existing one by the following setting.
 --------------------------------------
 Note, however, that one should then perform a fetch from each relevant remote
 to fully complete the conversion (prior to subsequent pushing).
+--------------------------------------
+% git config --global remote-hg.remove-username-quotes false
+
+By default, for backwards compatibility with earlier versions,
+git-remote-hg removes quotation marks from git usernames
+(e.g. 'Raffaello "Raphael" Sanzio da Urbino <raphael@example.com>'
+would become 'Raffaello Raphael Sanzio da Urbino
+<raphael@example.com>').  This breaks round-trip compatibility; a git
+commit by an author with quotes would become an hg commit without,
+and if re-imported into git, would get a different SHA1.
+
+To restore round-trip compatibility (at the cost of backwards
+compatibility with commits converted by older versions of
+git-remote-hg), turn 'remote-hg.remove-username-quotes' off.
 
 === Helper Commands ===
 
