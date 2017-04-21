@@ -581,7 +581,7 @@ def export_ref(repo, name, kind, head):
             if extra_msg:
                 desc += '\n--HG--\n' + extra_msg
 
-        if len(parents) == 0 and rev:
+        if len(parents) == 0:
             print 'reset %s/%s' % (prefix, ename)
 
         modified_final = export_files(c.filectx(f) for f in modified)
