@@ -885,6 +885,49 @@ test_expect_success 'fetch prune' '
 	)
 '
 
+test_expect_success 'fetch multiple independent histories' '
+	test_when_finished "rm -rf gitrepo hgrepo" &&
+
+	(
+	hg init hgrepo &&
+	cd hgrepo &&
+	echo zero > content &&
+	hg add content &&
+	hg commit -m zero &&
+	hg up -r null &&
+	echo another > ocontent &&
+	hg add ocontent &&
+	hg commit -m one
+	) &&
+
+	# -r 1 acts as master
+	(
+	git init --bare gitrepo && cd gitrepo &&
+	git remote add origin hg::../hgrepo &&
+	git fetch origin refs/heads/*:refs/heads/*
+	) &&
+
+	(
+	cd hgrepo &&
+	hg up 0 &&
+	echo two > content &&
+	hg commit -m two
+	) &&
+
+	# now master already exists
+	# -r 2 becomes master head which has rev 0 as ancestor
+	# so when importing (parentless) rev 0, a reset is needed
+	# (to ensure rev 0 is not given a parent commit)
+	(
+	cd gitrepo &&
+	git fetch origin &&
+	git log --format="%s" origin/master > ../actual
+	) &&
+
+	hg -R hgrepo log -r . -f --template "{desc}\n" > expected &&
+	test_cmp actual expected
+'
+
 test_expect_success 'clone remote with null bookmark, then push' '
 	test_when_finished "rm -rf gitrepo* hgrepo*" &&
 
