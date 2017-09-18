@@ -108,6 +108,23 @@ However, some of these features require very new versions of 'git-remote-hg',
 so you might have better luck simply specifying the username and password in
 the URL.
 
+=== Submodules ===
+
+Hg repositories can be used as git submodule, but this requires to allow the hg procotol to be used by git submodule commands:
+
+--------------------------------------
+git config protocol.hg.allow always
+--------------------------------------
+
+Or adding manually the following to your git configuration file:
+
+--------------------------------------
+[protocol "hg"]
+        allow = always
+--------------------------------------
+
+This can be done per-repository, every time after a clone, or globally in the global .gitconfig (using the --global command-line option).
+
 === Caveats ===
 
 The only major incompatibility is that Git octopus merges (a merge with more
