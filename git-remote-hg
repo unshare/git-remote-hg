@@ -1302,7 +1302,13 @@ def do_push_hg(parser):
                 tagnode, branch = write_tag(parser.repo, tag, node, msg, author)
                 p_revs[tagnode] = 'refs/heads/branches/' + gitref(branch)
             else:
-                fp = parser.repo.opener('localtags', 'a')
+                if hasattr(parser.repo, 'opener'):
+                    fp = parser.repo.opener('localtags', 'a')
+                else:
+                  try:
+                      fp = parser.repo.vfs('localtags', 'r+')
+                  except IOError:
+                      fp = parser.repo.vfs('localtags', 'a')
                 fp.write('%s %s\n' % (node, tag))
                 fp.close()
             p_revs[bnode] = ref
