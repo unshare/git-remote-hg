@@ -30,6 +30,8 @@ setup () {
 	[extensions]
 	mq =
 	strip =
+	[subrepos]
+	git:allowed = true
 	EOF
 
 	GIT_AUTHOR_DATE="2007-01-01 00:00:00 +0230" &&
