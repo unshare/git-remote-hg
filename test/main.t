@@ -1201,6 +1201,28 @@ test_expect_success 'clone replace directory with a file' '
 	check_files gitrepo "dir_or_file"
 '
 
+test_expect_success 'clone can ignore invalid refnames' '
+	test_when_finished "rm -rf hgrepo gitrepo" &&
+
+	(
+	hg init hgrepo &&
+	cd hgrepo &&
+
+	touch test.txt &&
+	hg add test.txt &&
+	hg commit -m master &&
+	hg branch parent &&
+	echo test >test.txt &&
+	hg commit -m test &&
+	hg branch parent/child &&
+	echo test1 >test.txt &&
+	hg commit -m test1
+	) &&
+
+	git clone -c remote-hg.ignore-name=child "hg::hgrepo" gitrepo &&
+	check_files gitrepo "test.txt"
+'
+
 if test "$CAPABILITY_PUSH" != "t"
 then
 test_done

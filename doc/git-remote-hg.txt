@@ -94,6 +94,14 @@ for an existing repo:
 Note that one should perform a fetch from each remote to properly complete the
 conversion to shared marks files.
 
+Mercurial name(s) (of a branch or bookmark) that are not a valid git refname,
+can be ignored by configuring a suitable regular expression, e.g. avoiding
+the invalid '~'
+
+--------------------------------------
+% git config --global remote-hg.ignore-name ~
+--------------------------------------
+
 NOTES
 -----
 

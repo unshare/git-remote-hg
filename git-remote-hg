@@ -96,8 +96,8 @@ def check_version(*check):
         return True
     return hg_version >= check
 
-def get_config(config):
-    cmd = ['git', 'config', '--get', config]
+def get_config(config, getall=False):
+    cmd = ['git', 'config', '--get' if not getall else '--get-all', config]
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE)
     output, _ = process.communicate()
     return output
@@ -707,6 +707,22 @@ def do_list(parser):
 
     list_head(repo, cur)
 
+    ignore_ref = get_config('remote-hg.ignore-name', True)
+    ignore_re = []
+    for exp in ignore_ref.splitlines():
+        if exp:
+            try:
+                #warn("checking %s" % (
+                ignore_re.append(re.compile(exp.strip()))
+            except:
+                warn("Invalid regular expression '%s'" % (exp))
+    def ignore(kind, name):
+        for r in ignore_re:
+            if r.search(name):
+                warn("Ignoring matched %s %s" % (kind, name))
+                return True
+        return False
+
     # for export command a ref's old_sha1 is taken from private namespace ref
     # for push command a fake one is provided
     # that avoids having the ref status reported as a new branch/tag
@@ -717,18 +733,20 @@ def do_list(parser):
 
     if track_branches:
         for branch in branches:
-            print "%s refs/heads/branches/%s" % (sha1, gitref(branch))
+            if not ignore('branch', branch):
+                print "%s refs/heads/branches/%s" % (sha1, gitref(branch))
 
     for bmark in bmarks:
         if bmarks[bmark].hex() == '0' * 40:
             warn("Ignoring invalid bookmark '%s'", bmark)
-        else:
+        elif not ignore('bookmark', bmark):
             print "%s refs/heads/%s" % (sha1, gitref(bmark))
 
     for tag, node in repo.tagslist():
         if tag == 'tip':
             continue
-        print "%s refs/tags/%s" % (sha1, gitref(tag))
+        if not ignore('tag', tag):
+            print "%s refs/tags/%s" % (sha1, gitref(tag))
 
     print
 

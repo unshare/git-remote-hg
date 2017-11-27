@@ -243,6 +243,23 @@ also be enabled on an existing one by the following setting.
 --------------------------------------
 Note, however, that one should then perform a fetch from each relevant remote
 to fully complete the conversion (prior to subsequent pushing).
+
+Some Mercurial names (of branches, bookmarks, tags) may not be a valid git
+refname. See e.g. `man git-check-ref-format` for a rather involved set of rules.
+Moreover, while a slash `/` is allowed, it is not supported to have both a `parent`
+and `parent/child` branch (though only the latter is allowed). So, pending some
+"nice" bidirectional encoding (not even e.g. URL encoding is safe actually), it is more
+likely that only a few instances (out of a whole Mercurial repo) are
+problematic.  This could be handled by a single-branch clone and/or configuring
+a suitable refspec.  However, it might be more convenient to simply filter out a
+few unimportant pesky cases, which can be done by configuring a regural
+expression in following setting:
+--------------------------------------
+% git config remote-hg.ignore-name nasty/nested/name
+--------------------------------------
+Recall also that a config setting can be provided at clone time
+(command line using `--config` option).
+
 --------------------------------------
 % git config --global remote-hg.remove-username-quotes false
 --------------------------------------
