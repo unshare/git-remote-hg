@@ -203,18 +203,16 @@ class GitHgRepo:
             context.memctx.__init__(self, repo, (p1, p2),
                 data, files.keys(), self.getfilectx)
             self.files = files
+            self.remotehg = import_sibling('remotehg', 'git-remote-hg')
+            self.remotehg.hg_version = hg_version
 
         def __contains__(self, item):
             return item in self.files
 
         def getfilectx(self, repo, memctx, path):
             is_exec = is_link = rename = False
-            if check_version(3, 1):
-                return context.memfilectx(repo, path, self.files[path],
-                        is_link, is_exec, rename)
-            else:
-                return context.memfilectx(path, self.files[path],
-                        is_link, is_exec, rename)
+            return self.remotehg.make_memfilectx(repo, memctx, path, self.files[path],
+                is_link, is_exec, rename)
 
     def read(self, relpath, rev=None):
         rev = rev if rev else ':0'
