@@ -403,6 +403,13 @@ def updatebookmarks(repo, peer):
     if not remotemarks:
         return
 
+    # use a higher level API from now on than the lower one below
+    if check_version(4,6):
+        for k, v in remotemarks.iteritems():
+            old = hghex(localmarks.get(k, ''))
+            bookmarks.pushbookmark(repo, k, old, v)
+        return
+
     for k, v in remotemarks.iteritems():
         localmarks[k] = hgbin(v)
 
