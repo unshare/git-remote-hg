@@ -239,7 +239,12 @@ class GitHgRepo:
         if not repo:
             die('no hg repo for alias %s' % remote)
         ctx = self.dictmemctx(repo, files)
-        state = subrepo.state(ctx, ui.ui())
+        # helpers moved around 4.6
+        if hasattr(subrepo, 'state'):
+          state = subrepo.state(ctx, ui.ui())
+        else:
+          from mercurial import subrepoutil
+          state = subrepoutil.state(ctx, ui.ui())
         log('obtained state %s', state)
 
         # now filter on type and resolve relative urls
