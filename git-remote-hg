@@ -510,10 +510,10 @@ def revwalk(repo, name, b):
     positive = []
     pending = set()
     if not marks.is_marked(b.hex()):
-        pending.add(int(b))
-    interval = int(b) / 10
+        pending.add(b.rev())
+    interval = b.rev() / 10
     interval = interval if interval > 1000 else 1000
-    for cur in xrange(b, -1, -1):
+    for cur in xrange(b.rev(), -1, -1):
         if not pending:
             break
 
@@ -526,7 +526,7 @@ def revwalk(repo, name, b):
                     pending.add(p)
 
         if cur % interval == 0:
-            print "progress revision walk '%s' (%d/%d)" % (name, (int(b) - cur), int(b))
+            print "progress revision walk '%s' (%d/%d)" % (name, (b.rev() - cur), b.rev())
 
     positive.reverse()
     return positive
