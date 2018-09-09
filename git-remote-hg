@@ -1121,7 +1121,10 @@ def checkheads_bmark(repo, ref, ctx, force):
         print "error %s unknown" % ref
         return False
 
-    if not repo.changelog.descendant(ctx_old.rev(), ctx_new.rev()):
+    # replaced around Mercurial 4.7
+    isancestor = repo.changelog.isancestorrev if hasattr(repo.changelog, 'isancestorrev') \
+        else repo.changelog.descendant
+    if not isancestor(ctx_old.rev(), ctx_new.rev()):
         if force:
             print "ok %s forced update" % ref
         else:
