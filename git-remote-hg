@@ -14,7 +14,7 @@
 # "$GIT_DIR/hg/origin/clone/.hg/".
 
 from mercurial import hg, ui, bookmarks, context, encoding
-from mercurial import node, error, extensions, discovery, util
+from mercurial import node, error, extensions, discovery, util, scmutil
 from mercurial import changegroup
 
 import re
@@ -629,7 +629,7 @@ def export_ref(repo, name, kind, head):
         notes.update(pending_revs)
 
 def export_tag(repo, tag):
-    export_ref(repo, tag, 'tags', repo[hgref(tag)])
+    export_ref(repo, tag, 'tags', scmutil.revsingle(repo, hgref(tag)))
 
 def export_bookmark(repo, bmark):
     head = bmarks[hgref(bmark)]
