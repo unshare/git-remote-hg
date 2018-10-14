@@ -26,4 +26,14 @@ install-doc: doc
 	install -d -m 755 $(D)$(mandir)/
 	install -m 644 doc/git-remote-hg.1 $(D)$(mandir)/git-remote-hg.1
 
-.PHONY: all test install install-doc clean
+pypi:
+	-rm -rf dist build
+	python setup.py sdist bdist_wheel
+
+pypi-upload:
+	twine upload dist/*
+
+pypi-test:
+	twine upload --repository-url https://test.pypi.org/legacy/ dist/*
+
+.PHONY: all test install install-doc clean pypy pypy-upload
