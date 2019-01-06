@@ -1489,6 +1489,11 @@ def do_push_refspec(parser, refspec, revs):
         if tmpmarks and os.path.exists(tmpmarks):
             if ok and not dry_run:
                 # the commits made it through, now we can commit
+                # sigh ... no atomic rename for existing destination on some platform ...
+                # (use unofficial platform check)
+                if os.sep != '/':
+                  if os.path.exists(marks):
+                    os.remove(marks)
                 os.rename(tmpmarks, marks)
                 revs[:] = nparser.context.revs
             else:
