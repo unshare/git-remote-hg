@@ -285,10 +285,16 @@ class Parser:
         return (user, int(date), -tz)
 
 def fix_file_path(path):
+    def posix_path(path):
+        if os.sep == '/':
+            return path
+        # even Git for Windows expects forward
+        return path.replace(os.sep, '/')
+    # also converts forward slash to backwards slash on Win
     path = os.path.normpath(path)
     if not os.path.isabs(path):
-        return path
-    return os.path.relpath(path, '/')
+        return posix_path(path)
+    return posix_path(os.path.relpath(path, '/'))
 
 def export_files(files):
     final = []
